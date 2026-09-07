@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NEXO</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-root">
+    <canvas id="view"></canvas>
+
+    <div id="hud" class="hidden">
+      <div id="hurt"></div>
+      <div id="hurt-l"></div>
+      <div id="hurt-r"></div>
+      <div class="crosshair"></div>
+      <div id="hitmarker">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div id="hp-layer"></div>
+      <div id="marker" class="hidden">
+        <div class="pip"></div>
+        <div class="dist" id="marker-dist">célula</div>
+      </div>
+      <div id="phase-banner" class="hidden"></div>
+      <div id="story" class="hidden"></div>
+      <div id="alert" class="hidden">Célula encontrada. Perigo: robôs ativados.</div>
+
+      <div class="mission">
+        <p class="mission-kicker" id="phase-kicker">FASE 1 / 4 — HANGAR</p>
+        <p id="mission-text">Recupere a célula e entregue-a no reator.</p>
+      </div>
+
+      <div class="top-bar">
+        <div class="stat">
+          <span class="label">INTEGRIDADE</span>
+          <div class="bar"><i id="hp-fill"></i></div>
+          <span class="label heat-lab">ARMA</span>
+          <div class="bar heat"><i id="heat-fill"></i></div>
+          <p class="sub ammo" id="ammo-line"><span id="weapon-name">PISTOLA</span> · <span id="ammo-count">12</span></p>
+        </div>
+        <div class="stat cores">
+          <span class="label">REATORES</span>
+          <strong id="core-count">0 / 2</strong>
+          <p class="sub" id="enemy-count">Inimigos: 0</p>
+          <p class="sub hidden" id="timer-lab">80s</p>
+        </div>
+      </div>
+
+      <div class="inv">
+        <span class="label">MOCHILA</span>
+        <div id="inv-slot" class="slot empty">VAZIO</div>
+      </div>
+
+      <div class="keys">
+        <div><kbd>WASD</kbd> mover</div>
+        <div><kbd>MOUSE</kbd> olhar</div>
+        <div><kbd>CLIQUE / F</kbd> atirar</div>
+        <div><kbd>ESC</kbd> pausar</div>
+      </div>
+
+      <div id="near-prompt" class="hidden">Aproxime-se para recolher</div>
+      <div id="lock-banner">Clique na tela para capturar o cursor</div>
+    </div>
+
+    <div id="menu" class="overlay">
+      <div class="panel">
+        <p class="tag">PROTOCOLO 07</p>
+        <h1>NEXO</h1>
+        <p class="blurb">
+          A estação está em blackout. O NEXO necessita de células nos reatores.
+          A mochila comporta apenas uma unidade. A defesa automática identifica o operador como intruso.
+        </p>
+        <ol class="howto">
+          <li>Derrote o <em>robô</em> para obter a célula</li>
+          <li>Entregue-a no <em>reator-bateria</em> da ala — uma por vez</li>
+          <li>Sem munição: localize uma <em>arma laranja</em> no chão</li>
+          <li>Cada fase amplia o mapa e intensifica a defesa</li>
+        </ol>
+        <button id="btn-start">INICIAR</button>
+        <p class="tiny">WASD · mouse · clique para atirar · ESC para pausar</p>
+      </div>
+    </div>
+
+    <div id="pause" class="overlay hidden">
+      <div class="panel">
+        <p class="tag">PAUSADO</p>
+        <h1>NEXO</h1>
+        <p class="blurb">Pressione ESC ou o botão para retomar. O cursor permanece livre até o próximo clique.</p>
+        <button id="btn-resume">CONTINUAR</button>
+      </div>
+    </div>
+
+    <div id="end" class="overlay hidden">
+      <div class="panel">
+        <p class="tag" id="end-tag">EXTRAÇÃO</p>
+        <h1 id="end-title">NEXO ESTÁVEL</h1>
+        <p class="blurb" id="end-blurb"></p>
+        <button id="btn-retry">REPETIR</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
