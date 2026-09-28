@@ -39,6 +39,7 @@
         <div class="stat">
           <span class="label">INTEGRIDADE</span>
           <div class="bar"><i id="hp-fill"></i></div>
+          <strong id="hp-value">100</strong>
           <span class="label heat-lab">ARMA</span>
           <div class="bar heat"><i id="heat-fill"></i></div>
           <p class="sub ammo" id="ammo-line"><span id="weapon-name">PISTOLA</span> · <span id="ammo-count">12</span></p>
@@ -55,18 +56,33 @@
         <span class="label">MOCHILA</span>
         <div id="inv-slot" class="slot empty">VAZIO</div>
       </div>
+      <div id="carry-status" class="hidden">BATERIA NA MOCHILA · LEVE AO REATOR</div>
+      <div id="weapon-hotbar" class="weapon-hotbar">
+        <button data-weapon="pistola"><b>1</b><span>PISTOLA</span><small>18</small></button>
+        <button data-weapon="rifle" class="locked"><b>2</b><span>RIFLE</span><small>BLOQUEADO</small></button>
+        <button data-weapon="escopeta" class="locked"><b>3</b><span>ESCOPETA</span><small>BLOQUEADO</small></button>
+      </div>
 
       <div class="keys">
         <div><kbd>WASD</kbd> mover</div>
         <div><kbd>MOUSE</kbd> olhar</div>
-        <div><kbd>CLIQUE / F</kbd> atirar</div>
+        <div><kbd>CLIQUE / F</kbd> atirar · segure para automático</div>
         <div><kbd>BOTÃO DIREITO</kbd> mirar</div>
+        <div><kbd>1 · 2 · 3</kbd> trocar arma</div>
         <div><kbd>R</kbd> recarregar</div>
         <div><kbd>ESC</kbd> pausar</div>
       </div>
 
       <div id="near-prompt" class="hidden">Aproxime-se para recolher</div>
       <div id="lock-banner">Clique na tela para capturar o cursor</div>
+      <div id="mobile-controls">
+        <div id="touch-stick"><i></i></div>
+        <div id="touch-look">ARRASTE PARA OLHAR</div>
+        <button id="touch-aim">MIRA</button>
+        <button id="touch-fire">ATIRAR</button>
+        <button id="touch-reload">R</button>
+        <button id="touch-jump">PULAR</button>
+      </div>
     </div>
 
     <div id="menu" class="overlay">

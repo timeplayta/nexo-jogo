@@ -7,6 +7,7 @@ const endScreen = document.getElementById("end");
 const pauseScreen = document.getElementById("pause");
 const hud = document.getElementById("hud");
 const hpFill = document.getElementById("hp-fill");
+const hpValue = document.getElementById("hp-value");
 const coreCount = document.getElementById("core-count");
 const hurt = document.getElementById("hurt");
 const markerEl = document.getElementById("marker");
@@ -26,13 +27,22 @@ const hpLayer = document.getElementById("hp-layer");
 const storyEl = document.getElementById("story");
 const alertEl = document.getElementById("alert");
 const invSlot = document.getElementById("inv-slot");
+const carryStatus = document.getElementById("carry-status");
 const weaponNameEl = document.getElementById("weapon-name");
 const ammoCountEl = document.getElementById("ammo-count");
 const ammoLineEl = document.getElementById("ammo-line");
+const hotbarButtons = [...document.querySelectorAll("#weapon-hotbar button")];
 const crosshairEl = document.querySelector(".crosshair");
 const btnStart = document.getElementById("btn-start");
 const btnRetry = document.getElementById("btn-retry");
 const btnResume = document.getElementById("btn-resume");
+const touchStick = document.getElementById("touch-stick");
+const touchKnob = touchStick?.querySelector("i");
+const touchLook = document.getElementById("touch-look");
+const touchAim = document.getElementById("touch-aim");
+const touchFire = document.getElementById("touch-fire");
+const touchReload = document.getElementById("touch-reload");
+const touchJump = document.getElementById("touch-jump");
 
 const KEYS = {};
 const PLAYER_R = 0.4;
@@ -103,6 +113,9 @@ const state = {
   shotFlash: 0,
   aiming: false,
   aim: 0,
+  firing: false,
+  touchMoveX: 0,
+  touchMoveY: 0,
   hurtFlash: 0,
   iframe: 0,
   bob: 0,
@@ -125,6 +138,8 @@ const state = {
   carryingFrom: null,
   weapon: "pistola",
   ammo: 18,
+  ownedWeapons: ["pistola"],
+  weaponAmmo: { pistola: 18 },
   reserve: 240,
   reloading: false,
   reloadT: 0,
@@ -629,7 +644,20 @@ function buildGunModel(type) {
   return g;
 }
 
+function updateHotbar() {
+  for (const button of hotbarButtons) {
+    const type = button.dataset.weapon;
+    const owned = state.ownedWeapons.includes(type);
+    const ammo = state.weaponAmmo[type];
+    button.classList.toggle("locked", !owned);
+    button.classList.toggle("active", owned && state.weapon === type);
+    const info = button.querySelector("small");
+    if (info) info.textContent = owned ? `${ammo ?? WEAPONS[type].mag} BALAS` : "BLOQUEADO";
+  }
+}
+
 function updateWeaponHud() {
+  state.weaponAmmo[state.weapon] = state.ammo;
   weaponNameEl.textContent = WEAPONS[state.weapon].name;
   ammoCountEl.textContent = state.reloading ? "..." : String(state.ammo);
   ammoLineEl.classList.toggle("low", state.ammo <= 3 && !state.reloading);
@@ -642,6 +670,7 @@ function updateWeaponHud() {
     ammoLineEl.appendChild(resEl);
   }
   resEl.textContent = `/ ${state.reserve}`;
+  updateHotbar();
 }
 
 function startReload() {
@@ -668,9 +697,18 @@ function finishReload() {
 }
 
 function setWeapon(type, silent = false) {
+  if (state.weapon && state.weaponAmmo) state.weaponAmmo[state.weapon] = state.ammo;
+  const newlyOwned = !state.ownedWeapons.includes(type);
+  if (newlyOwned) {
+    state.ownedWeapons.push(type);
+    state.weaponAmmo[type] = WEAPONS[type].mag;
+  }
+  if (!silent) {
+    state.weaponAmmo[type] = WEAPONS[type].mag;
+    state.reserve = Math.min(360, state.reserve + WEAPONS[type].pickup);
+  }
   state.weapon = type;
-  state.ammo = WEAPONS[type].mag;
-  if (!silent) state.reserve = Math.min(360, state.reserve + WEAPONS[type].pickup);
+  state.ammo = state.weaponAmmo[type] ?? WEAPONS[type].mag;
   state.reloading = false;
   state.reloadT = 0;
   while (gun.children.length) gun.remove(gun.children[0]);
@@ -683,6 +721,13 @@ function setWeapon(type, silent = false) {
     sfx.pickup();
     showBanner(`${WEAPONS[type].name} — CARREGADOR COMPLETO`);
   }
+}
+
+function switchWeapon(type) {
+  if (!state.ownedWeapons.includes(type) || state.weapon === type || state.reloading) return;
+  setWeapon(type, true);
+  sfx.pickup();
+  showBanner(`${WEAPONS[type].name} EQUIPADO`);
 }
 
 const gun = new THREE.Group();
@@ -1593,9 +1638,10 @@ function spawnReinforcements() {
 }
 
 function updateInv() {
-  invSlot.textContent = state.carrying ? "CÉLULA" : "VAZIA";
+  invSlot.textContent = state.carrying ? "BATERIA" : "VAZIA";
   invSlot.classList.toggle("full", state.carrying);
   invSlot.classList.toggle("empty", !state.carrying);
+  carryStatus?.classList.toggle("hidden", !state.carrying);
 }
 
 function addCage(x, z) {
@@ -1984,6 +2030,8 @@ function movePlayer(dt) {
   if (pressed("KeyS", "ArrowDown")) _wish.sub(_fwd);
   if (pressed("KeyD", "ArrowRight")) _wish.add(_right);
   if (pressed("KeyA", "ArrowLeft")) _wish.sub(_right);
+  if (Math.abs(state.touchMoveY) > 0.08) _wish.addScaledVector(_fwd, -state.touchMoveY);
+  if (Math.abs(state.touchMoveX) > 0.08) _wish.addScaledVector(_right, state.touchMoveX);
   const wishing = _wish.lengthSq() > 0;
   if (wishing) {
     _wish.normalize();
@@ -2233,10 +2281,11 @@ function updateShots(dt) {
   }
 }
 
-function showHit(kill, armor = false) {
+function showHit(kill, armor = false, critical = false) {
   hitmarker.classList.add("show");
   hitmarker.classList.toggle("kill", !!kill);
   hitmarker.classList.toggle("armor", !!armor);
+  hitmarker.classList.toggle("critical", !!critical && !armor);
   if (!armor) sfx.hitmark();
   hitTimer = armor ? 0.08 : 0.12;
 }
@@ -2247,6 +2296,18 @@ function isWeakPoint(e, point) {
   return local.z > 0.32 && Math.abs(local.x) < 0.48 && local.y > -0.15 && local.y < 0.55;
 }
 
+function hitZoneMultiplier(e, point) {
+  if (e.kind === "heavy") return 1.35;
+  const local = e.mesh.worldToLocal(point.clone());
+  const centerY = e.kind === "turret" ? 0.95 : 0;
+  const nx = Math.abs(local.x) / Math.max(0.2, e.radius);
+  const ny = Math.abs(local.y - centerY) / Math.max(0.2, e.radius * 0.9);
+  const fromCenter = Math.hypot(nx, ny);
+  if (fromCenter <= 0.38) return 1.5;
+  if (fromCenter >= 0.82) return 0.7;
+  return 1;
+}
+
 function hitEnemy(e, point, dmg = 1) {
   if (!isWeakPoint(e, point)) {
     sfx.armor(point);
@@ -2255,12 +2316,14 @@ function hitEnemy(e, point, dmg = 1) {
     showHit(false, true);
     return;
   }
-  e.hp -= dmg;
+  const zoneMultiplier = hitZoneMultiplier(e, point);
+  const finalDamage = dmg * zoneMultiplier;
+  e.hp -= finalDamage;
   sfx.droneHit(point);
-  spawnBits(point, 0xff6a48, 8);
+  spawnBits(point, zoneMultiplier >= 1.4 ? 0xffe45a : zoneMultiplier < 1 ? 0xff8a62 : 0xff6a48, 8);
   e.mesh.scale.setScalar(1.12);
   const dead = e.hp <= 0;
-  showHit(dead);
+  showHit(dead, false, zoneMultiplier >= 1.4);
   if (dead) {
     e.alive = false;
     spawnBits(e.mesh.position, 0xff4028, 16);
@@ -2747,6 +2810,7 @@ function updateFx(dt) {
   if (hurtL) hurtL.style.opacity = String(state.hurtL);
   if (hurtR) hurtR.style.opacity = String(state.hurtR);
   hpFill.style.transform = `scaleX(${state.hp / 100})`;
+  if (hpValue) hpValue.textContent = `${Math.max(0, Math.ceil(state.hp))} / 100`;
   if (heatFill) heatFill.style.transform = `scaleX(${state.heat / 100})`;
   lockBanner.classList.toggle("hidden", !!document.pointerLockElement || state.paused);
   hitTimer -= dt;
@@ -2876,6 +2940,9 @@ function resetGame() {
   state.shotFlash = 0;
   state.aiming = false;
   state.aim = 0;
+  state.firing = false;
+  state.touchMoveX = 0;
+  state.touchMoveY = 0;
   muzzleFlash.visible = false;
   state.hurtFlash = 0;
   state.iframe = 0;
@@ -2890,6 +2957,10 @@ function resetGame() {
   state.lastHitBy = "";
   state.carrying = false;
   state.carryingFrom = null;
+  state.ownedWeapons = ["pistola"];
+  state.weaponAmmo = { pistola: WEAPONS.pistola.mag };
+  state.weapon = "pistola";
+  state.ammo = WEAPONS.pistola.mag;
   state.reserve = 240;
   state.reloading = false;
   state.reloadT = 0;
@@ -2912,6 +2983,7 @@ function loop(now) {
   if (state.running && !state.paused) {
     const t = now / 1000;
     movePlayer(dt);
+    if (state.firing) shoot();
     updateCores(t, dt);
     updateWeapons(t, dt);
     updateEnemies(t, dt);
@@ -2943,15 +3015,7 @@ btnStart.addEventListener("click", start);
 btnRetry.addEventListener("click", start);
 btnResume.addEventListener("click", () => setPaused(false));
 
-canvas.addEventListener("click", () => {
-  if (!state.running || state.paused) return;
-  if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock();
-    if (state.triedLock) shoot();
-    state.triedLock = true;
-    return;
-  }
-  // tenta abrir a porta se tiver perto e olhando pra ela
+function tryOpenDoor() {
   if (state.door && !state.door.open) {
     const d = player.position.distanceTo(state.door.pos);
     if (d < 4) {
@@ -2960,18 +3024,28 @@ canvas.addEventListener("click", () => {
       const hits = ray.intersectObject(state.door.mesh, true);
       if (hits.length > 0) {
         openSpawnDoor();
-        return;
+        return true;
       }
     }
   }
-  shoot();
-});
+  return false;
+}
 
 canvas.addEventListener("mousedown", (e) => {
   if (!state.running || state.paused) return;
-  if (!document.pointerLockElement && e.button === 0) state.dragging = true;
+  if (e.button !== 0) return;
+  if (document.pointerLockElement !== canvas) {
+    state.dragging = true;
+    state.triedLock = true;
+    canvas.requestPointerLock();
+    return;
+  }
+  if (tryOpenDoor()) return;
+  state.firing = true;
+  shoot();
 });
 window.addEventListener("mouseup", (e) => {
+  if (e.button === 0) state.firing = false;
   state.dragging = false;
 });
 document.addEventListener("mousedown", (e) => {
@@ -2980,6 +3054,13 @@ document.addEventListener("mousedown", (e) => {
   state.aiming = !state.aiming;
 });
 document.addEventListener("contextmenu", (e) => e.preventDefault());
+document.addEventListener("pointerlockchange", () => {
+  if (document.pointerLockElement !== canvas) state.firing = false;
+});
+window.addEventListener("blur", () => {
+  state.firing = false;
+  state.dragging = false;
+});
 
 document.addEventListener("mousemove", (e) => {
   if (!state.running || state.paused) return;
@@ -2990,6 +3071,11 @@ document.addEventListener("mousemove", (e) => {
 
 document.addEventListener("keydown", (e) => {
   KEYS[e.code] = true;
+  const slotWeapon = { Digit1: "pistola", Digit2: "rifle", Digit3: "escopeta" }[e.code];
+  if (slotWeapon && state.running && !state.paused && !e.repeat) {
+    switchWeapon(slotWeapon);
+    return;
+  }
   if (e.code === "Space") {
     e.preventDefault();
     if (!e.repeat) state.jumpBuf = 0.14;
@@ -3004,6 +3090,98 @@ document.addEventListener("keydown", (e) => {
 });
 document.addEventListener("keyup", (e) => {
   KEYS[e.code] = false;
+});
+
+for (const button of hotbarButtons) {
+  button.addEventListener("click", () => {
+    if (!state.running || state.paused) return;
+    switchWeapon(button.dataset.weapon);
+    canvas.requestPointerLock?.();
+  });
+}
+
+let stickPointer = null;
+touchStick?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  stickPointer = e.pointerId;
+  touchStick.setPointerCapture(e.pointerId);
+});
+touchStick?.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== stickPointer) return;
+  const r = touchStick.getBoundingClientRect();
+  let x = (e.clientX - (r.left + r.width / 2)) / (r.width * 0.36);
+  let y = (e.clientY - (r.top + r.height / 2)) / (r.height * 0.36);
+  const len = Math.hypot(x, y);
+  if (len > 1) {
+    x /= len;
+    y /= len;
+  }
+  state.touchMoveX = x;
+  state.touchMoveY = y;
+  if (touchKnob) touchKnob.style.transform = `translate(${x * 30}px, ${y * 30}px)`;
+});
+const releaseStick = (e) => {
+  if (stickPointer !== null && e.pointerId !== stickPointer) return;
+  stickPointer = null;
+  state.touchMoveX = 0;
+  state.touchMoveY = 0;
+  if (touchKnob) touchKnob.style.transform = "";
+};
+touchStick?.addEventListener("pointerup", releaseStick);
+touchStick?.addEventListener("pointercancel", releaseStick);
+
+let lookPointer = null;
+let lookX = 0;
+let lookY = 0;
+touchLook?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  lookPointer = e.pointerId;
+  lookX = e.clientX;
+  lookY = e.clientY;
+  touchLook.setPointerCapture(e.pointerId);
+});
+touchLook?.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== lookPointer) return;
+  state.mx += (e.clientX - lookX) * 1.2;
+  state.my += (e.clientY - lookY) * 1.2;
+  lookX = e.clientX;
+  lookY = e.clientY;
+});
+const releaseLook = (e) => {
+  if (lookPointer !== null && e.pointerId !== lookPointer) return;
+  lookPointer = null;
+};
+touchLook?.addEventListener("pointerup", releaseLook);
+touchLook?.addEventListener("pointercancel", releaseLook);
+
+touchFire?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!state.running || state.paused || tryOpenDoor()) return;
+  state.firing = true;
+  shoot();
+});
+const releaseTouchFire = () => {
+  state.firing = false;
+};
+touchFire?.addEventListener("pointerup", releaseTouchFire);
+touchFire?.addEventListener("pointercancel", releaseTouchFire);
+touchAim?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.running && !state.paused) state.aiming = !state.aiming;
+});
+touchReload?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.running && !state.paused) startReload();
+});
+touchJump?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.running && !state.paused) state.jumpBuf = 0.14;
 });
 
 window.addEventListener("resize", () => {
