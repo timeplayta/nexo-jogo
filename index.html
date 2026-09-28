@@ -17,6 +17,8 @@
       <div id="hurt"></div>
       <div id="hurt-l"></div>
       <div id="hurt-r"></div>
+      <div id="shield-glow" class="hidden"></div>
+      <div id="use-fx" class="hidden"></div>
       <div class="crosshair"></div>
       <div id="hitmarker">
         <span></span><span></span><span></span><span></span>
@@ -40,6 +42,8 @@
           <span class="label">INTEGRIDADE</span>
           <div class="bar"><i id="hp-fill"></i></div>
           <strong id="hp-value">100</strong>
+          <span class="label shield-lab">ESCUDO</span>
+          <div class="bar shield"><i id="shield-fill"></i></div>
           <span class="label heat-lab">ARMA</span>
           <div class="bar heat"><i id="heat-fill"></i></div>
           <p class="sub ammo" id="ammo-line"><span id="weapon-name">PISTOLA</span> · <span id="ammo-count">12</span></p>
@@ -61,6 +65,8 @@
         <button data-weapon="pistola"><b>1</b><span>PISTOLA</span><small>18</small></button>
         <button data-weapon="rifle" class="locked"><b>2</b><span>RIFLE</span><small>BLOQUEADO</small></button>
         <button data-weapon="escopeta" class="locked"><b>3</b><span>ESCOPETA</span><small>BLOQUEADO</small></button>
+        <button data-gear="medkit" class="gear kit empty"><b>4</b><span>KIT</span><small>0</small></button>
+        <button data-gear="shield" class="gear shield empty"><b>5</b><span>ESCUDO</span><small>0</small></button>
       </div>
 
       <div class="keys">
@@ -69,6 +75,7 @@
         <div><kbd>CLIQUE / F</kbd> atirar · segure para automático</div>
         <div><kbd>BOTÃO DIREITO</kbd> mirar</div>
         <div><kbd>1 · 2 · 3</kbd> trocar arma</div>
+        <div><kbd>4 · 5</kbd> kit médico / escudo</div>
         <div><kbd>R</kbd> recarregar</div>
         <div><kbd>ESC</kbd> pausar</div>
       </div>
@@ -82,6 +89,8 @@
         <button id="touch-fire">ATIRAR</button>
         <button id="touch-reload">R</button>
         <button id="touch-jump">PULAR</button>
+        <button id="touch-kit">KIT</button>
+        <button id="touch-shield">ESC</button>
       </div>
     </div>
 
@@ -97,6 +106,7 @@
           <li>Derrote o <em>robô</em> para obter a célula</li>
           <li>Entregue-a no <em>reator-bateria</em> da ala — uma por vez</li>
           <li>Sem munição: localize uma <em>arma laranja</em> no chão</li>
+          <li>Kits verdes curam. Escudos azuis absorvem dano. Use com <em>4</em> e <em>5</em></li>
           <li>Cada fase amplia o mapa e intensifica a defesa</li>
         </ol>
         <button id="btn-start">INICIAR</button>

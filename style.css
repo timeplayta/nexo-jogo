@@ -156,6 +156,34 @@ html, body {
   box-shadow: 0 0 10px #ff6a2a;
 }
 .heat-lab { margin-top: 8px !important; }
+.shield-lab { margin-top: 8px !important; color: #7ad8ff !important; }
+.bar.shield {
+  margin-top: 4px;
+  border-color: #2a6a88;
+}
+.bar.shield i {
+  background: linear-gradient(90deg, #2ab4ff, #9af0ff);
+  box-shadow: 0 0 10px rgba(80, 210, 255, 0.75);
+}
+#shield-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 90px rgba(60, 190, 255, 0.28);
+}
+#use-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s linear;
+}
+#use-fx.medkit {
+  background: radial-gradient(circle at 50% 70%, rgba(70, 255, 140, 0.28), transparent 55%);
+}
+#use-fx.shield {
+  background: radial-gradient(circle at 50% 70%, rgba(70, 200, 255, 0.3), transparent 55%);
+}
 .sub {
   margin-top: 6px;
   font-size: 11px;
@@ -462,6 +490,9 @@ button:hover {
   display: flex;
   gap: 8px;
   pointer-events: auto;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: min(760px, 94vw);
 }
 
 .weapon-hotbar button {
@@ -513,6 +544,29 @@ button:hover {
   opacity: 0.42;
   filter: grayscale(1);
   cursor: not-allowed;
+}
+.weapon-hotbar button.gear {
+  width: 92px;
+}
+.weapon-hotbar button.gear.kit {
+  border-color: #2a7a4a;
+}
+.weapon-hotbar button.gear.kit small { color: #6dff9a; }
+.weapon-hotbar button.gear.shield {
+  border-color: #2a6a88;
+}
+.weapon-hotbar button.gear.shield small { color: #7ad8ff; }
+.weapon-hotbar button.gear.empty {
+  opacity: 0.45;
+}
+.weapon-hotbar button.gear.ready {
+  opacity: 1;
+  box-shadow: 0 0 12px rgba(80, 255, 180, 0.25);
+}
+.weapon-hotbar button.gear.using {
+  color: #eafffb;
+  border-color: #d8fff0;
+  transform: translateY(-5px);
 }
 
 #hitmarker.critical span {
@@ -594,6 +648,8 @@ button:hover {
   #touch-aim { right: 112px; bottom: 128px; }
   #touch-reload { right: 112px; bottom: 76px; }
   #touch-jump { right: 22px; bottom: 172px; }
+  #touch-kit { left: 148px; bottom: 98px; width: 58px !important; border-color: #6dff9a; color: #b8ffd0; }
+  #touch-shield { left: 148px; bottom: 152px; width: 58px !important; border-color: #7ad8ff; color: #c4f0ff; }
 
   .weapon-hotbar {
     bottom: 10px;

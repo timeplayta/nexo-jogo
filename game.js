@@ -31,7 +31,11 @@ const carryStatus = document.getElementById("carry-status");
 const weaponNameEl = document.getElementById("weapon-name");
 const ammoCountEl = document.getElementById("ammo-count");
 const ammoLineEl = document.getElementById("ammo-line");
-const hotbarButtons = [...document.querySelectorAll("#weapon-hotbar button")];
+const hotbarButtons = [...document.querySelectorAll("#weapon-hotbar button[data-weapon]")];
+const gearButtons = [...document.querySelectorAll("#weapon-hotbar button[data-gear]")];
+const shieldFill = document.getElementById("shield-fill");
+const shieldGlow = document.getElementById("shield-glow");
+const useFx = document.getElementById("use-fx");
 const crosshairEl = document.querySelector(".crosshair");
 const btnStart = document.getElementById("btn-start");
 const btnRetry = document.getElementById("btn-retry");
@@ -43,6 +47,8 @@ const touchAim = document.getElementById("touch-aim");
 const touchFire = document.getElementById("touch-fire");
 const touchReload = document.getElementById("touch-reload");
 const touchJump = document.getElementById("touch-jump");
+const touchKit = document.getElementById("touch-kit");
+const touchShield = document.getElementById("touch-shield");
 
 const KEYS = {};
 const PLAYER_R = 0.4;
@@ -53,15 +59,15 @@ const PHASE_INFO = [
   "",
   "O reator central está desativado. Derrote os robôs portadores, recupere 2 células e instale-as no reator.",
   "Destrua o gerador laranja para desativar as torretas. Derrote os robôs para obter as células.",
-  "Os corredores permitem flanqueio. Observe o temporizador. Recupere as células dos robôs.",
+  "Os corredores permitem flanqueio. Observe o temporizador. Pegue os kits verdes e os escudos azuis se a vida baixar.",
   "A unidade pesada só sofre dano no visor. Recupere as 3 células e instale-as no cofre.",
 ];
 const STORY = [
   "",
   "O NEXO foi desativado. Os reatores estão vazios. A defesa automática identifica o operador como intruso.",
   "A ala leste ativou as torretas. O gerador laranja as alimenta. As células estão com os robôs da ala.",
-  "Os corredores foram ativados. O protocolo de tempo foi iniciado. As unidades irão flanquear.",
-  "O cofre norte abriga o último reator. A unidade pesada protege a entrada. Apenas o visor é vulnerável.",
+  "Os corredores foram ativados. O protocolo de tempo foi iniciado. Há kits e escudos nos flancos — use com 4 e 5.",
+  "O cofre norte abriga o último reator. A unidade pesada protege a entrada. Apenas o visor é vulnerável. Use kits e escudos nos flancos.",
 ];
 const LABELS = { drone: "Drone", turret: "Torreta", chaser: "Unidade rápida", heavy: "Unidade pesada", alarm: "Alarme de tempo" };
 const WEAPONS = {
@@ -159,6 +165,13 @@ const state = {
   mx: 0,
   my: 0,
   door: null,
+  medkits: 0,
+  shieldPacks: 0,
+  shield: 0,
+  using: null,
+  useT: 0,
+  useDur: 1,
+  useApplied: false,
 };
 
 const audio = { ctx: null, master: null, humGain: null, started: false };
@@ -366,6 +379,28 @@ const sfx = {
   overclock() {
     beep(440, 0.12, "sine", 0.14, 200);
     beep(880, 0.2, "triangle", 0.1);
+  },
+  kitReady() {
+    beep(420, 0.08, "sine", 0.12);
+    beep(640, 0.12, "triangle", 0.12, 80);
+  },
+  kitUse() {
+    noiseBurst(0.1, 0.12, 1400);
+    beep(280, 0.16, "sine", 0.14, 120);
+    beep(520, 0.22, "triangle", 0.12, 90);
+  },
+  shieldReady() {
+    beep(240, 0.1, "triangle", 0.12);
+    beep(480, 0.16, "sine", 0.12, 60);
+  },
+  shieldUse() {
+    beep(180, 0.18, "sine", 0.16, 80);
+    beep(360, 0.24, "triangle", 0.14, 140);
+    noiseBurst(0.08, 0.1, 900);
+  },
+  shieldHit() {
+    beep(210, 0.07, "square", 0.1);
+    noiseBurst(0.04, 0.07, 1600);
   },
   beat(phase) {
     beep(70 + phase * 6, 0.07, "sine", 0.06 + phase * 0.01);
@@ -675,7 +710,7 @@ function updateWeaponHud() {
 
 function startReload() {
   const w = WEAPONS[state.weapon];
-  if (state.reloading || state.ammo >= w.mag || state.reserve <= 0) return;
+  if (state.reloading || state.using || state.ammo >= w.mag || state.reserve <= 0) return;
   state.aiming = false;
   state.reloading = true;
   state.reloadT = w.reload;
@@ -724,7 +759,7 @@ function setWeapon(type, silent = false) {
 }
 
 function switchWeapon(type) {
-  if (!state.ownedWeapons.includes(type) || state.weapon === type || state.reloading) return;
+  if (!state.ownedWeapons.includes(type) || state.weapon === type || state.reloading || state.using) return;
   setWeapon(type, true);
   sfx.pickup();
   showBanner(`${WEAPONS[type].name} EQUIPADO`);
@@ -734,6 +769,10 @@ const gun = new THREE.Group();
 camera.add(gun);
 gun.position.copy(VIEW_POSES.pistola.hip);
 gun.add(buildGunModel("pistola"));
+
+const itemHand = new THREE.Group();
+camera.add(itemHand);
+itemHand.visible = false;
 
 const muzzleFlash = new THREE.Group();
 const flashMat = new THREE.MeshBasicMaterial({
@@ -806,6 +845,7 @@ const shots = [];
 const enemyShots = [];
 const bits = [];
 const weaponPickups = [];
+const gearPickups = [];
 let wMat;
 let hitTimer = 0;
 let bannerTimer = 0;
@@ -1312,6 +1352,7 @@ function spawnPhase(n) {
   state.carryingFrom = null;
   updateInv();
   updateWeaponHud();
+  updateGearHud();
   if (n === 1) {
     spawnReactor(0, -7.5, 2);
     spawnEnemy("drone", 0, 2.8, true);
@@ -1320,6 +1361,8 @@ function spawnPhase(n) {
     spawnWeapon("pistola", 10.2, -5);
     spawnEnemy("drone", 8.4, -8);
     spawnEnemy("drone", -8.6, 8.2);
+    spawnGear("medkit", 6.8, 10.4);
+    spawnGear("shield", -6.8, -10.4);
   }
   if (n === 2) {
     openGate("east");
@@ -1330,6 +1373,9 @@ function spawnPhase(n) {
     spawnEnemy("chaser", 29.2, 4, true);
     spawnWeapon("escopeta", 30.5, 7.5);
     spawnWeapon("rifle", 16, -7.5);
+    spawnGear("medkit", 16.5, 7.4);
+    spawnGear("medkit", 31, 7.2);
+    spawnGear("shield", 32, -8.4);
     spawnEnemy("turret", 20.5, 7);
     spawnEnemy("turret", 27, -7.2);
     spawnEnemy("drone", 30, 0);
@@ -1346,6 +1392,11 @@ function spawnPhase(n) {
     spawnWeapon("rifle", -30.5, 7.2);
     spawnWeapon("escopeta", 7, 28.5);
     spawnWeapon("pistola", -5.2, 19);
+    spawnGear("medkit", -31, 7.2);
+    spawnGear("medkit", 8.2, 19.2);
+    spawnGear("medkit", -16.5, 7.8);
+    spawnGear("shield", -31, -7.2);
+    spawnGear("shield", 3.2, 29.2);
     spawnEnemy("chaser", -23.5, -6);
     spawnEnemy("chaser", -19, 6.5);
     spawnEnemy("chaser", 6.2, 21.5);
@@ -1360,6 +1411,9 @@ function spawnPhase(n) {
     spawnEnemy("drone", 6.2, -26.2, true);
     spawnWeapon("escopeta", -7.5, -28.5);
     spawnWeapon("rifle", 7.8, -28.8);
+    spawnGear("medkit", -8.2, -18.8);
+    spawnGear("medkit", 0, -22.8);
+    spawnGear("shield", 8.2, -18.8);
     spawnEnemy("heavy", 0, -27.5);
     spawnEnemy("turret", -7, -19);
     spawnEnemy("chaser", 7.2, -19.2);
@@ -1430,6 +1484,214 @@ function nearestWeapon() {
     }
   }
   return best;
+}
+
+function buildMedkitProp() {
+  const g = new THREE.Group();
+  const caseBox = mesh(new THREE.BoxGeometry(0.38, 0.22, 0.28), metal(0xd8e8dc, { metalness: 0.15, roughness: 0.45 }));
+  const lid = mesh(new THREE.BoxGeometry(0.4, 0.04, 0.3), metal(0x1a3a28, { metalness: 0.3, roughness: 0.4 }), 0, 0.13, 0);
+  const crossV = mesh(new THREE.BoxGeometry(0.06, 0.03, 0.18), emit(0xff3a3a, 1.4), 0, 0.16, 0);
+  const crossH = mesh(new THREE.BoxGeometry(0.18, 0.03, 0.06), emit(0xff3a3a, 1.4), 0, 0.16, 0);
+  g.add(caseBox, lid, crossV, crossH);
+  return g;
+}
+
+function buildShieldProp() {
+  const g = new THREE.Group();
+  const plate = mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.05, 6), metal(0x1a3344, { metalness: 0.85, roughness: 0.22 }));
+  plate.rotation.x = Math.PI / 2;
+  const rim = mesh(new THREE.TorusGeometry(0.22, 0.018, 8, 6), emit(0x4ad4ff, 1.6));
+  rim.rotation.x = Math.PI / 2;
+  const core = mesh(new THREE.OctahedronGeometry(0.08), emit(0x9af0ff, 1.8));
+  g.add(plate, rim, core);
+  return g;
+}
+
+function buildUseItem(kind) {
+  const g = new THREE.Group();
+  if (kind === "medkit") {
+    const pack = mesh(new THREE.BoxGeometry(0.16, 0.1, 0.22), metal(0xe4f0e8, { metalness: 0.12, roughness: 0.4 }));
+    const stripe = mesh(new THREE.BoxGeometry(0.162, 0.03, 0.222), emit(0x2dff78, 1.1), 0, 0.03, 0);
+    const crossV = mesh(new THREE.BoxGeometry(0.025, 0.02, 0.09), emit(0xff3a3a, 1.8), 0, 0.06, 0);
+    const crossH = mesh(new THREE.BoxGeometry(0.09, 0.02, 0.025), emit(0xff3a3a, 1.8), 0, 0.06, 0);
+    const vial = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.14, 8), emit(0x6dff9a, 1.2), 0.08, 0.01, 0.02);
+    vial.rotation.z = 0.4;
+    g.add(pack, stripe, crossV, crossH, vial);
+  } else {
+    const plate = mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.03, 6), metal(0x173040, { metalness: 0.9, roughness: 0.18 }));
+    plate.rotation.x = 1.15;
+    const rim = mesh(new THREE.TorusGeometry(0.13, 0.012, 8, 6), emit(0x4ad4ff, 2));
+    rim.rotation.x = 1.15;
+    const core = mesh(new THREE.OctahedronGeometry(0.045), emit(0xb8f4ff, 2.2), 0, 0.02, 0);
+    const grip = mesh(new THREE.BoxGeometry(0.04, 0.08, 0.05), metal(0x1a222b), 0, -0.07, 0.04);
+    g.add(plate, rim, core, grip);
+  }
+  return g;
+}
+
+function gearFull(kind) {
+  return kind === "medkit" ? state.medkits >= 2 : state.shieldPacks >= 1;
+}
+
+function spawnGear(kind, x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const color = kind === "medkit" ? 0x3dff7a : 0x4ad4ff;
+  const crate = mesh(new THREE.BoxGeometry(0.86, 0.42, 0.86), metal(0x162028, { roughness: 0.58 }), 0, 0.21, 0);
+  const stripe = mesh(new THREE.BoxGeometry(0.88, 0.07, 0.88), emit(color, 1.05), 0, 0.38, 0);
+  const model = kind === "medkit" ? buildMedkitProp() : buildShieldProp();
+  model.position.set(0, 0.88, 0);
+  const halo = mesh(new THREE.TorusGeometry(0.5, 0.018, 8, 20), new THREE.MeshBasicMaterial({ color }), 0, 0.48, 0);
+  halo.rotation.x = Math.PI / 2;
+  halo.castShadow = false;
+  const glow = new THREE.PointLight(color, 1.5, 6.5);
+  glow.position.y = 1.0;
+  g.add(crate, stripe, model, halo, glow);
+  world.add(g);
+  gearPickups.push({ mesh: g, model, kind, taken: false });
+}
+
+function takeGear(g) {
+  if (g.taken || gearFull(g.kind)) return false;
+  g.taken = true;
+  world.remove(g.mesh);
+  if (g.kind === "medkit") {
+    state.medkits += 1;
+    sfx.kitReady();
+    showBanner("KIT MÉDICO — 4 PARA CURAR");
+  } else {
+    state.shieldPacks += 1;
+    sfx.shieldReady();
+    showBanner("ESCUDO — 5 PARA ATIVAR");
+  }
+  spawnBits(g.mesh.position.clone().setY(0.9), g.kind === "medkit" ? 0x3dff7a : 0x4ad4ff, 12);
+  updateGearHud();
+  return true;
+}
+
+function updateGear(t, dt) {
+  let close = null;
+  for (const g of gearPickups) {
+    if (g.taken) continue;
+    g.model.rotation.y += dt * 1.5;
+    g.model.position.y = 0.88 + Math.sin(t * 2.1 + g.mesh.position.x) * 0.07;
+    const d = Math.hypot(g.mesh.position.x - player.position.x, g.mesh.position.z - player.position.z);
+    if (d < 2.7) close = g;
+    if (d < 1.55) takeGear(g);
+  }
+  if (!close || !state.running || state.paused) return;
+  if (gearFull(close.kind)) {
+    nearPrompt.textContent = close.kind === "medkit"
+      ? "Você já carrega 2 kits. Use um com 4."
+      : "Você já carrega um escudo. Use com 5.";
+  } else {
+    nearPrompt.textContent = close.kind === "medkit"
+      ? "Kit médico. Recolha e use com 4."
+      : "Escudo portátil. Recolha e use com 5.";
+  }
+  nearPrompt.classList.remove("hidden");
+}
+
+function nearestGear(kind) {
+  let best = null;
+  let bestD = Infinity;
+  for (const g of gearPickups) {
+    if (g.taken) continue;
+    if (kind && g.kind !== kind) continue;
+    const d = g.mesh.position.distanceTo(player.position);
+    if (d < bestD) {
+      bestD = d;
+      best = g;
+    }
+  }
+  return best;
+}
+
+function updateGearHud() {
+  for (const button of gearButtons) {
+    const kind = button.dataset.gear;
+    const count = kind === "medkit" ? state.medkits : state.shieldPacks;
+    const info = button.querySelector("small");
+    if (info) info.textContent = String(count);
+    button.classList.toggle("empty", count <= 0);
+    button.classList.toggle("ready", count > 0);
+    button.classList.toggle("using", state.using === kind);
+  }
+}
+
+function startUseItem(kind) {
+  if (!state.running || state.paused || state.using || state.reloading) return;
+  if (kind === "medkit") {
+    if (state.medkits <= 0) {
+      showBanner("SEM KIT MÉDICO");
+      return;
+    }
+    if (state.hp >= 100) {
+      showBanner("INTEGRIDADE CHEIA");
+      return;
+    }
+  } else {
+    if (state.shieldPacks <= 0) {
+      showBanner("SEM ESCUDO");
+      return;
+    }
+    if (state.shield >= 80) {
+      showBanner("ESCUDO CHEIO");
+      return;
+    }
+  }
+  state.using = kind;
+  state.useDur = kind === "medkit" ? 1.2 : 1.05;
+  state.useT = state.useDur;
+  state.useApplied = false;
+  state.aiming = false;
+  state.firing = false;
+  while (itemHand.children.length) itemHand.remove(itemHand.children[0]);
+  itemHand.add(buildUseItem(kind));
+  itemHand.visible = true;
+  if (useFx) {
+    useFx.className = kind;
+    useFx.classList.remove("hidden");
+    useFx.style.opacity = "1";
+  }
+  showBanner(kind === "medkit" ? "APLICANDO KIT..." : "ATIVANDO ESCUDO...");
+  updateGearHud();
+}
+
+function applyUseItem() {
+  if (state.useApplied || !state.using) return;
+  state.useApplied = true;
+  const origin = player.position.clone();
+  origin.y = EYE * 0.7;
+  if (state.using === "medkit") {
+    state.medkits = Math.max(0, state.medkits - 1);
+    state.hp = Math.min(100, state.hp + 55);
+    sfx.kitUse();
+    spawnBits(origin, 0x3dff7a, 16);
+    showBanner("INTEGRIDADE +55");
+  } else {
+    state.shieldPacks = Math.max(0, state.shieldPacks - 1);
+    state.shield = Math.min(80, state.shield + 70);
+    sfx.shieldUse();
+    spawnBits(origin, 0x4ad4ff, 16);
+    showBanner("ESCUDO ATIVO");
+  }
+  state.iframe = Math.max(state.iframe, 0.45);
+  updateGearHud();
+}
+
+function endUseItem() {
+  if (state.using && !state.useApplied) applyUseItem();
+  state.using = null;
+  state.useT = 0;
+  state.useApplied = false;
+  itemHand.visible = false;
+  while (itemHand.children.length) itemHand.remove(itemHand.children[0]);
+  if (useFx) {
+    useFx.style.opacity = "0";
+    useFx.classList.add("hidden");
+  }
+  updateGearHud();
 }
 
 function spawnCore(x, z, first = false, locked = false) {
@@ -1558,13 +1820,14 @@ function chargeReactor(r) {
 }
 
 function startCellInsert(r, seat, led, onDone) {
-  const cell = cloneAsset("prop_cell", 0.75, false) || mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.34, 10), emit(0x2affd0, 1.4));
+  // Berço interno ~0.22 x 0.32. 0.58 deixa a célula dentro do quadrado.
+  const cell = cloneAsset("prop_cell", 0.58, false) || mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.26, 10), emit(0x2affd0, 1.4));
   r.mesh.add(cell);
   const end = seat.clone();
-  end.y += 0.08;
+  end.z -= 0.03;
   const start = end.clone();
-  start.y += 0.58;
-  start.z -= 0.46;
+  start.y += 0.42;
+  start.z -= 0.36;
   cell.position.copy(start);
   cell.rotation.x = -0.85;
   r.inserts.push({ cell, start, end, led, onDone, t: 0, dur: 0.72, done: false });
@@ -1944,6 +2207,7 @@ function clearWorld() {
   enemies.length = 0;
   props.length = 0;
   weaponPickups.length = 0;
+  gearPickups.length = 0;
   colliders.length = 0;
   gates.length = 0;
   for (const s of shots) scene.remove(s.mesh);
@@ -2100,7 +2364,7 @@ function movePlayer(dt) {
   camera.position.y = damp(camera.position.y, EYE + bobC * 0.026 - state.landKick, 10, dt);
 
   const sprintAmt = sprint && hSpeed > 3.5 ? 1 : 0;
-  const canAim = state.aiming && !state.reloading && sprintAmt !== 1;
+  const canAim = state.aiming && !state.reloading && !state.using && sprintAmt !== 1;
   state.aim = damp(state.aim, canAim ? 1 : 0, 13, dt);
   const wantFov = 72 + sprintAmt * 7 - state.aim * 16;
   if (Math.abs(camera.fov - wantFov) > 0.04) {
@@ -2111,11 +2375,13 @@ function movePlayer(dt) {
   const kick = state.shotKick;
   const reloadPhase = state.reloading ? Math.min(1, 1 - state.reloadT / WEAPONS[state.weapon].reload) : 0;
   const reloadDrop = state.reloading ? Math.sin(reloadPhase * Math.PI) : 0;
+  const useDrop = state.using ? 1 : 0;
   const pose = VIEW_POSES[state.weapon];
   const aimPoint = gun.userData.aimPoint || pose.aim;
-  gun.position.x = damp(gun.position.x, THREE.MathUtils.lerp(pose.hip.x, aimPoint.x, state.aim) + bobS * 0.014 * (1 - state.aim) + state.swayX * (1 - state.aim * 0.75) + kick * 0.018, 18, dt);
-  gun.position.y = damp(gun.position.y, THREE.MathUtils.lerp(pose.hip.y, aimPoint.y, state.aim) + Math.abs(bobS) * 0.022 * (1 - state.aim) + state.swayY - state.landKick * 0.45 - kick * 0.045 - reloadDrop * 0.28, 18, dt);
-  gun.position.z = damp(gun.position.z, THREE.MathUtils.lerp(pose.hip.z, aimPoint.z, state.aim) - sprintAmt * 0.06 + kick * 0.16 + reloadDrop * 0.1, 20, dt);
+  gun.position.x = damp(gun.position.x, THREE.MathUtils.lerp(pose.hip.x, aimPoint.x, state.aim) + bobS * 0.014 * (1 - state.aim) + state.swayX * (1 - state.aim * 0.75) + kick * 0.018 + useDrop * 0.28, 18, dt);
+  gun.position.y = damp(gun.position.y, THREE.MathUtils.lerp(pose.hip.y, aimPoint.y, state.aim) + Math.abs(bobS) * 0.022 * (1 - state.aim) + state.swayY - state.landKick * 0.45 - kick * 0.045 - reloadDrop * 0.28 - useDrop * 0.55, 18, dt);
+  gun.position.z = damp(gun.position.z, THREE.MathUtils.lerp(pose.hip.z, aimPoint.z, state.aim) - sprintAmt * 0.06 + kick * 0.16 + reloadDrop * 0.1 + useDrop * 0.18, 20, dt);
+  gun.visible = !state.using;
   if (crosshairEl) crosshairEl.style.opacity = String(1 - state.aim * 0.92);
 }
 
@@ -2133,7 +2399,7 @@ function spawnBits(pos, color, n = 10) {
 }
 
 function shoot() {
-  if (!state.running || state.paused || state.shootCd > 0 || state.overheat || state.reloading) return;
+  if (!state.running || state.paused || state.shootCd > 0 || state.overheat || state.reloading || state.using) return;
   const w = WEAPONS[state.weapon];
   if (state.ammo <= 0) {
     state.shootCd = 0.3;
@@ -2369,8 +2635,15 @@ function hitGenerator(p, dmg = 1) {
 
 function damage(amount, fromPos, label) {
   if (state.iframe > 0) return;
-  state.hp = Math.max(0, state.hp - amount);
-  state.hurtFlash = 1;
+  let hpHit = amount;
+  if (state.shield > 0) {
+    const absorbed = Math.min(state.shield, amount);
+    state.shield -= absorbed;
+    hpHit = amount - absorbed;
+    if (absorbed > 0) sfx.shieldHit();
+  }
+  state.hp = Math.max(0, state.hp - hpHit);
+  state.hurtFlash = hpHit > 0 ? 1 : 0.4;
   state.iframe = 0.7;
   if (label) state.lastHitBy = label;
   if (state.carrying && amount >= 12 && state.hp > 0) {
@@ -2641,6 +2914,14 @@ function nearestObjective() {
     const w = nearestWeapon();
     if (w) return { mesh: w.mesh, kind: "weapon" };
   }
+  if (state.hp < 50 && state.medkits <= 0) {
+    const kit = nearestGear("medkit");
+    if (kit) return { mesh: kit.mesh, kind: "medkit" };
+  }
+  if (state.hp < 40 && state.shield <= 0 && state.shieldPacks <= 0) {
+    const sh = nearestGear("shield");
+    if (sh) return { mesh: sh.mesh, kind: "shield" };
+  }
   const gen = props.find((p) => p.alive && p.kind === "gen");
   if (gen) return { mesh: gen.mesh, kind: "gen" };
   if (state.carrying) {
@@ -2684,7 +2965,11 @@ function updateMarker() {
           ? `arma ${meters}m`
           : c.kind === "carrier"
             ? `portador ${meters}m`
-            : `${meters}m`;
+            : c.kind === "medkit"
+              ? `kit ${meters}m`
+              : c.kind === "shield"
+                ? `escudo ${meters}m`
+                : `${meters}m`;
   if (meters > 3) {
     guide.visible = true;
     guide.geometry.setFromPoints([
@@ -2719,8 +3004,34 @@ function updateMission() {
     missionText.textContent = "Sem munição. Siga o marcador até uma arma laranja.";
     return;
   }
+  if (state.using) {
+    missionText.textContent = state.using === "medkit" ? "Aplicando kit médico..." : "Ativando escudo de energia...";
+    return;
+  }
   if (state.reloading) {
     missionText.textContent = "Recarregando...";
+    return;
+  }
+  if (state.hp < 45 && state.medkits <= 0) {
+    const kit = nearestGear("medkit");
+    if (kit) {
+      missionText.textContent = "Vida baixa. Siga o marcador até um kit médico verde.";
+      return;
+    }
+  }
+  if (state.hp < 40 && state.shield <= 0 && state.shieldPacks <= 0) {
+    const sh = nearestGear("shield");
+    if (sh) {
+      missionText.textContent = "Pegue um escudo azul no flanco para absorver o próximo hit.";
+      return;
+    }
+  }
+  if (state.medkits > 0 && state.hp < 55) {
+    missionText.textContent = "Vida baixa. Pressione 4 para usar o kit médico.";
+    return;
+  }
+  if (state.shieldPacks > 0 && state.shield <= 0 && state.hp < 70) {
+    missionText.textContent = "Pressione 5 para ativar o escudo antes do próximo combate.";
     return;
   }
   if (props.some((p) => p.alive && p.kind === "gen")) {
@@ -2797,8 +3108,34 @@ function updateFx(dt) {
     gun.rotation.z = -0.32 * arc + Math.sin(rp * Math.PI * 2) * 0.06;
     if (state.reloadT <= 0) finishReload();
   }
+  if (state.using) {
+    state.useT -= dt;
+    const p = THREE.MathUtils.clamp(1 - state.useT / state.useDur, 0, 1);
+    const rise = Math.min(1, p / 0.22);
+    const apply = THREE.MathUtils.smoothstep(p, 0.42, 0.7);
+    const away = THREE.MathUtils.clamp((p - 0.8) / 0.2, 0, 1);
+    const inject = state.using === "medkit" ? apply : 0;
+    const brace = state.using === "shield" ? apply : 0;
+    itemHand.visible = true;
+    itemHand.position.set(
+      0.2 * (1 - inject * 0.9) * (1 - brace * 0.7),
+      -0.45 + rise * 0.32 - inject * 0.12 - brace * 0.05 - away * 0.55,
+      -0.4 - rise * 0.06 + inject * 0.14 + brace * 0.08 - away * 0.22
+    );
+    itemHand.rotation.set(
+      0.4 - rise * 0.5 - inject * 0.85 + brace * 0.55,
+      Math.sin(p * Math.PI) * 0.22,
+      (1 - rise) * 0.45 - inject * 0.2 + brace * 0.1
+    );
+    itemHand.scale.setScalar(0.82 + rise * 0.18 + brace * 0.22 - away * 0.5);
+    if (p >= 0.6 && !state.useApplied) applyUseItem();
+    if (useFx) useFx.style.opacity = String(Math.max(0, 1 - away) * (0.45 + apply * 0.55));
+    if (state.useT <= 0) endUseItem();
+  } else if (itemHand.visible) {
+    itemHand.visible = false;
+  }
   muzzle.intensity = THREE.MathUtils.damp(muzzle.intensity, 0, 10, dt);
-  if (!state.reloading) {
+  if (!state.reloading && !state.using) {
     gun.rotation.x = THREE.MathUtils.damp(gun.rotation.x, 0, 13, dt);
     gun.rotation.y = THREE.MathUtils.damp(gun.rotation.y, 0, 15, dt);
     gun.rotation.z = THREE.MathUtils.damp(gun.rotation.z, 0, 12, dt);
@@ -2810,7 +3147,13 @@ function updateFx(dt) {
   if (hurtL) hurtL.style.opacity = String(state.hurtL);
   if (hurtR) hurtR.style.opacity = String(state.hurtR);
   hpFill.style.transform = `scaleX(${state.hp / 100})`;
-  if (hpValue) hpValue.textContent = `${Math.max(0, Math.ceil(state.hp))} / 100`;
+  if (hpValue) {
+    hpValue.textContent = state.shield > 0
+      ? `${Math.max(0, Math.ceil(state.hp))} / 100  ·  ESC ${Math.ceil(state.shield)}`
+      : `${Math.max(0, Math.ceil(state.hp))} / 100`;
+  }
+  if (shieldFill) shieldFill.style.transform = `scaleX(${state.shield / 80})`;
+  shieldGlow?.classList.toggle("hidden", state.shield <= 0);
   if (heatFill) heatFill.style.transform = `scaleX(${state.heat / 100})`;
   lockBanner.classList.toggle("hidden", !!document.pointerLockElement || state.paused);
   hitTimer -= dt;
@@ -2965,7 +3308,21 @@ function resetGame() {
   state.reloading = false;
   state.reloadT = 0;
   state.door = null;
+  state.medkits = 0;
+  state.shieldPacks = 0;
+  state.shield = 0;
+  state.using = null;
+  state.useT = 0;
+  state.useApplied = false;
+  itemHand.visible = false;
+  while (itemHand.children.length) itemHand.remove(itemHand.children[0]);
+  gun.visible = true;
+  if (useFx) {
+    useFx.style.opacity = "0";
+    useFx.classList.add("hidden");
+  }
   updateInv();
+  updateGearHud();
   setWeapon("pistola", true);
   player.position.set(0, 0, 18);
   pauseScreen.classList.add("hidden");
@@ -2986,6 +3343,7 @@ function loop(now) {
     if (state.firing) shoot();
     updateCores(t, dt);
     updateWeapons(t, dt);
+    updateGear(t, dt);
     updateEnemies(t, dt);
     updateSpawnDoor(dt);
     updateShots(dt);
@@ -3076,6 +3434,14 @@ document.addEventListener("keydown", (e) => {
     switchWeapon(slotWeapon);
     return;
   }
+  if (e.code === "Digit4" && state.running && !state.paused && !e.repeat) {
+    startUseItem("medkit");
+    return;
+  }
+  if (e.code === "Digit5" && state.running && !state.paused && !e.repeat) {
+    startUseItem("shield");
+    return;
+  }
   if (e.code === "Space") {
     e.preventDefault();
     if (!e.repeat) state.jumpBuf = 0.14;
@@ -3091,6 +3457,14 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("keyup", (e) => {
   KEYS[e.code] = false;
 });
+
+for (const button of gearButtons) {
+  button.addEventListener("click", () => {
+    if (!state.running || state.paused) return;
+    startUseItem(button.dataset.gear);
+    canvas.requestPointerLock?.();
+  });
+}
 
 for (const button of hotbarButtons) {
   button.addEventListener("click", () => {
@@ -3182,6 +3556,16 @@ touchJump?.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   e.stopPropagation();
   if (state.running && !state.paused) state.jumpBuf = 0.14;
+});
+touchKit?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.running && !state.paused) startUseItem("medkit");
+});
+touchShield?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.running && !state.paused) startUseItem("shield");
 });
 
 window.addEventListener("resize", () => {
