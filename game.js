@@ -55,22 +55,34 @@ const STORY = [
 ];
 const LABELS = { drone: "Drone", turret: "Torreta", chaser: "Unidade rápida", heavy: "Unidade pesada", alarm: "Alarme de tempo" };
 const WEAPONS = {
-  pistola: { name: "PISTOLA", dmg: 1.5, cd: 0.22, mag: 18, heat: 10, pellets: 1, spread: 0.006, recoil: -0.3, reload: 0.95, pickup: 54 },
-  rifle: { name: "RIFLE", dmg: 1.2, cd: 0.1, mag: 40, heat: 7, pellets: 1, spread: 0.016, recoil: -0.18, reload: 1.25, pickup: 120 },
-  escopeta: { name: "ESCOPETA", dmg: 1.25, cd: 0.68, mag: 10, heat: 25, pellets: 7, spread: 0.06, recoil: -0.55, reload: 1.65, pickup: 40 },
+  pistola: {
+    name: "PISTOLA", dmg: 1.6, cd: 0.22, mag: 18, heat: 10, pellets: 1,
+    spread: 0.006, recoil: -0.3, reload: 0.95, pickup: 54,
+    speed: 48, falloffStart: 10, range: 26, minDamage: 0.55,
+  },
+  rifle: {
+    name: "RIFLE", dmg: 1.35, cd: 0.1, mag: 40, heat: 7, pellets: 1,
+    spread: 0.016, recoil: -0.18, reload: 1.25, pickup: 120,
+    speed: 70, falloffStart: 18, range: 48, minDamage: 0.75,
+  },
+  escopeta: {
+    name: "ESCOPETA", dmg: 1.4, cd: 0.68, mag: 10, heat: 25, pellets: 7,
+    spread: 0.06, recoil: -0.55, reload: 1.65, pickup: 40,
+    speed: 42, falloffStart: 3.5, range: 16, minDamage: 0.18,
+  },
 };
 const VIEW_POSES = {
   pistola: {
-    hip: new THREE.Vector3(0.22, -0.18, -0.32),
-    aim: new THREE.Vector3(0, -0.064, -0.26),
+    hip: new THREE.Vector3(0.22, -0.18, -0.44),
+    aim: new THREE.Vector3(0, -0.064, -0.36),
   },
   rifle: {
-    hip: new THREE.Vector3(0.3, -0.22, -0.46),
-    aim: new THREE.Vector3(0, -0.13, -0.34),
+    hip: new THREE.Vector3(0.3, -0.22, -0.59),
+    aim: new THREE.Vector3(0, -0.13, -0.48),
   },
   escopeta: {
-    hip: new THREE.Vector3(0.3, -0.23, -0.48),
-    aim: new THREE.Vector3(0, -0.13, -0.4),
+    hip: new THREE.Vector3(0.3, -0.23, -0.63),
+    aim: new THREE.Vector3(0, -0.13, -0.52),
   },
 };
 
@@ -2109,20 +2121,7 @@ function shoot() {
   camera.getWorldPosition(origin);
   camera.getWorldDirection(dir);
   origin.addScaledVector(dir, 0.55);
-  let closeHit = false;
-  for (const e of enemies) {
-    if (!e.alive || e.spawning) continue;
-    const to = e.mesh.position.clone().sub(origin);
-    const dist = to.length();
-    if (dist > 3.4) continue;
-    to.normalize();
-    if (to.dot(dir) > 0.62) {
-      hitEnemy(e, e.mesh.position, w.dmg);
-      closeHit = true;
-      break;
-    }
-  }
-  if (!closeHit) for (let i = 0; i < w.pellets; i++) {
+  for (let i = 0; i < w.pellets; i++) {
     const d = dir.clone();
     if (w.spread) {
       const spread = w.spread * THREE.MathUtils.lerp(1, 0.32, state.aim);
@@ -2136,7 +2135,17 @@ function shoot() {
     bolt.position.copy(origin);
     bolt.castShadow = false;
     scene.add(bolt);
-    shots.push({ mesh: bolt, dir: d, life: 0.7, dmg: w.dmg });
+    shots.push({
+      mesh: bolt,
+      dir: d,
+      life: w.range / w.speed + 0.08,
+      dmg: w.dmg,
+      speed: w.speed,
+      range: w.range,
+      falloffStart: w.falloffStart,
+      minDamage: w.minDamage,
+      traveled: 0,
+    });
   }
 }
 
@@ -2157,6 +2166,10 @@ function stepBolt(s, speed, dt, onMove) {
   const part = (speed * dt) / steps;
   for (let k = 0; k < steps; k++) {
     s.mesh.position.addScaledVector(s.dir, part);
+    if (Number.isFinite(s.traveled)) {
+      s.traveled += part;
+      if (s.traveled > s.range) return "range";
+    }
     const r = onMove();
     if (r) return r;
     if (pointBlocked(s.mesh.position.x, s.mesh.position.y, s.mesh.position.z)) return "wall";
@@ -2164,22 +2177,33 @@ function stepBolt(s, speed, dt, onMove) {
   return null;
 }
 
+function shotDamageAtDistance(s) {
+  if (s.traveled <= s.falloffStart) return s.dmg;
+  const t = THREE.MathUtils.clamp(
+    (s.traveled - s.falloffStart) / Math.max(0.01, s.range - s.falloffStart),
+    0,
+    1
+  );
+  return s.dmg * THREE.MathUtils.lerp(1, s.minDamage, t);
+}
+
 function updateShots(dt) {
   for (let i = shots.length - 1; i >= 0; i--) {
     const s = shots[i];
     s.life -= dt;
-    const res = stepBolt(s, 44, dt, () => {
+    const res = stepBolt(s, s.speed, dt, () => {
+      const damageNow = shotDamageAtDistance(s);
       for (const p of props) {
         if (!p.alive) continue;
         if (s.mesh.position.distanceTo(new THREE.Vector3(p.mesh.position.x, 1.15, p.mesh.position.z)) < 0.9) {
-          hitGenerator(p, s.dmg || 1);
+          hitGenerator(p, damageNow);
           return "hit";
         }
       }
       for (const e of enemies) {
         if (!e.alive || e.spawning) continue;
         if (s.mesh.position.distanceTo(e.mesh.position) < e.radius + 0.55) {
-          hitEnemy(e, s.mesh.position, s.dmg || 1);
+          hitEnemy(e, s.mesh.position, damageNow);
           return "hit";
         }
       }
