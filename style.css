@@ -7,6 +7,7 @@
 html, body {
   width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   background: #07090d;
   color: #d5f6ff;
@@ -15,14 +16,21 @@ html, body {
   touch-action: none;
 }
 
-#game-root, #view {
+#game-root {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+#view {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-}
-
-#view {
   display: block;
   cursor: crosshair;
 }
@@ -32,6 +40,8 @@ html, body {
 }
 
 #hud {
+  position: absolute;
+  inset: 0;
   pointer-events: none;
 }
 
@@ -321,6 +331,8 @@ kbd {
 
 .panel {
   width: min(500px, 92vw);
+  max-height: min(92dvh, 100%);
+  overflow: auto;
   padding: 32px 36px 28px;
   background: rgba(6, 12, 18, 0.86);
   border: 1px solid #2b6a74;
@@ -493,6 +505,7 @@ button:hover {
   flex-wrap: wrap;
   justify-content: center;
   max-width: min(760px, 94vw);
+  z-index: 8;
 }
 
 .weapon-hotbar button {
@@ -583,51 +596,55 @@ button:hover {
     display: none !important;
   }
 
+  h1 { font-size: 48px; }
+  .panel { padding: 18px 16px 16px; width: min(500px, 94vw); }
+  .blurb, .howto { font-size: 13px; }
+
   #mobile-controls {
     display: block;
     position: absolute;
     inset: 0;
     pointer-events: none;
-    z-index: 20;
+    z-index: 2;
+  }
+
+  #touch-look {
+    position: absolute;
+    inset: 0;
+    width: auto;
+    height: auto;
+    color: transparent;
+    font-size: 0;
+    padding: 0;
+    pointer-events: auto;
+    touch-action: none;
+    z-index: 1;
   }
 
   #touch-stick {
     position: absolute;
-    left: 24px;
-    bottom: 92px;
-    width: 112px;
-    height: 112px;
+    left: max(16px, env(safe-area-inset-left));
+    bottom: max(88px, calc(20px + env(safe-area-inset-bottom)));
+    width: 128px;
+    height: 128px;
     border: 2px solid rgba(127, 255, 232, 0.55);
     border-radius: 50%;
     background: rgba(4, 12, 16, 0.42);
     pointer-events: auto;
     touch-action: none;
+    z-index: 5;
   }
 
   #touch-stick i {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 48px;
-    height: 48px;
-    margin: -24px;
+    width: 52px;
+    height: 52px;
+    margin: -26px;
     border-radius: 50%;
     background: rgba(127, 255, 232, 0.7);
     box-shadow: 0 0 14px rgba(80, 255, 220, 0.5);
-  }
-
-  #touch-look {
-    position: absolute;
-    right: 0;
-    top: 70px;
-    width: 55%;
-    bottom: 80px;
-    color: rgba(160, 220, 220, 0.3);
-    font-size: 9px;
-    text-align: center;
-    padding-top: 8px;
-    pointer-events: auto;
-    touch-action: none;
   }
 
   #mobile-controls button {
@@ -642,31 +659,39 @@ button:hover {
     font-weight: 700;
     pointer-events: auto;
     touch-action: none;
+    z-index: 5;
   }
 
-  #touch-fire { right: 22px; bottom: 98px; width: 82px !important; height: 66px !important; }
-  #touch-aim { right: 112px; bottom: 128px; }
-  #touch-reload { right: 112px; bottom: 76px; }
-  #touch-jump { right: 22px; bottom: 172px; }
-  #touch-kit { left: 148px; bottom: 98px; width: 58px !important; border-color: #6dff9a; color: #b8ffd0; }
-  #touch-shield { left: 148px; bottom: 152px; width: 58px !important; border-color: #7ad8ff; color: #c4f0ff; }
+  #touch-fire { right: max(16px, env(safe-area-inset-right)); bottom: max(90px, calc(24px + env(safe-area-inset-bottom))); width: 88px !important; height: 72px !important; }
+  #touch-aim { right: max(112px, calc(env(safe-area-inset-right) + 96px)); bottom: max(120px, calc(54px + env(safe-area-inset-bottom))); }
+  #touch-reload { right: max(112px, calc(env(safe-area-inset-right) + 96px)); bottom: max(68px, calc(12px + env(safe-area-inset-bottom))); }
+  #touch-jump { right: max(16px, env(safe-area-inset-right)); bottom: max(170px, calc(104px + env(safe-area-inset-bottom))); }
+  #touch-kit { left: max(156px, calc(env(safe-area-inset-left) + 140px)); bottom: max(90px, calc(24px + env(safe-area-inset-bottom))); width: 58px !important; border-color: #6dff9a; color: #b8ffd0; }
+  #touch-shield { left: max(156px, calc(env(safe-area-inset-left) + 140px)); bottom: max(146px, calc(80px + env(safe-area-inset-bottom))); width: 58px !important; border-color: #7ad8ff; color: #c4f0ff; }
 
   .weapon-hotbar {
-    bottom: 10px;
+    bottom: max(8px, env(safe-area-inset-bottom));
     gap: 4px;
+    z-index: 6;
   }
   .weapon-hotbar button {
-    width: 82px;
-    height: 48px;
+    width: 72px;
+    height: 46px;
     padding: 5px;
   }
-  .inv { right: 8px; bottom: 238px; transform: scale(.82); transform-origin: right bottom; }
-  .mission { width: min(460px, 72vw); }
-  .top-bar { left: 8px; right: 8px; bottom: 8px; }
+  .inv { right: 8px; bottom: 238px; transform: scale(.82); transform-origin: right bottom; z-index: 6; }
+  .mission { top: max(10px, env(safe-area-inset-top)); width: min(460px, 94vw); padding: 8px 12px; }
+  #mission-text { font-size: 16px; }
+  .top-bar {
+    left: max(8px, env(safe-area-inset-left));
+    right: auto;
+    bottom: max(230px, calc(140px + env(safe-area-inset-bottom)));
+    z-index: 6;
+  }
   .stat { padding: 6px 8px; }
   .bar { width: 130px; }
   .cores { display: none; }
-  #carry-status { bottom: 68px; font-size: 12px; }
+  #carry-status { bottom: 68px; font-size: 12px; z-index: 6; }
 }
 
 .ammo {

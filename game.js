@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const canvas = document.getElementById("view");
+const gameRoot = document.getElementById("game-root");
 const menu = document.getElementById("menu");
 const endScreen = document.getElementById("end");
 const pauseScreen = document.getElementById("pause");
@@ -437,7 +438,6 @@ function panOf(pos) {
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance", alpha: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -454,6 +454,36 @@ player.position.set(0, 0, 6);
 scene.add(player);
 player.add(camera);
 camera.position.set(0, EYE, 0);
+
+function mobileHudOn() {
+  return window.matchMedia("(pointer: coarse), (max-width: 820px)").matches;
+}
+
+function viewSize() {
+  const vv = window.visualViewport;
+  return {
+    w: Math.max(1, Math.round(vv?.width ?? innerWidth)),
+    h: Math.max(1, Math.round(vv?.height ?? innerHeight)),
+    x: Math.round(vv?.offsetLeft ?? 0),
+    y: Math.round(vv?.offsetTop ?? 0),
+  };
+}
+
+function resizeView() {
+  const { w, h, x, y } = viewSize();
+  if (gameRoot) {
+    gameRoot.style.left = `${x}px`;
+    gameRoot.style.top = `${y}px`;
+    gameRoot.style.width = `${w}px`;
+    gameRoot.style.height = `${h}px`;
+  }
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  canvas.style.width = "100%";
+  canvas.style.height = "100%";
+}
+resizeView();
 
 const world = new THREE.Group();
 scene.add(world);
@@ -2319,8 +2349,13 @@ function movePlayer(dt) {
   state.lookPitch = THREE.MathUtils.clamp(state.lookPitch - state.my * 0.00205, -1.25, 1.25);
   state.mx = 0;
   state.my = 0;
-  state.yaw = damp(state.yaw, state.lookYaw, 22, dt);
-  state.pitch = damp(state.pitch, state.lookPitch, 22, dt);
+  if (mobileHudOn()) {
+    state.yaw = state.lookYaw;
+    state.pitch = state.lookPitch;
+  } else {
+    state.yaw = damp(state.yaw, state.lookYaw, 22, dt);
+    state.pitch = damp(state.pitch, state.lookPitch, 22, dt);
+  }
 
   const sprint = pressed("ShiftLeft", "ShiftRight");
   const speed = sprint ? 8.4 : 5.5;
@@ -2331,7 +2366,7 @@ function movePlayer(dt) {
   if (pressed("KeyS", "ArrowDown")) _wish.sub(_fwd);
   if (pressed("KeyD", "ArrowRight")) _wish.add(_right);
   if (pressed("KeyA", "ArrowLeft")) _wish.sub(_right);
-  if (Math.abs(state.touchMoveY) > 0.08) _wish.addScaledVector(_fwd, -state.touchMoveY);
+  if (Math.abs(state.touchMoveY) > 0.08) _wish.addScaledVector(_fwd, state.touchMoveY);
   if (Math.abs(state.touchMoveX) > 0.08) _wish.addScaledVector(_right, state.touchMoveX);
   const wishing = _wish.lengthSq() > 0;
   if (wishing) {
@@ -3470,6 +3505,10 @@ function tryOpenDoor() {
 canvas.addEventListener("mousedown", (e) => {
   if (!state.running || state.paused) return;
   if (e.button !== 0) return;
+  if (mobileHudOn()) {
+    tryOpenDoor();
+    return;
+  }
   if (document.pointerLockElement !== canvas) {
     state.dragging = true;
     state.triedLock = true;
@@ -3557,7 +3596,9 @@ touchStick?.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   e.stopPropagation();
   stickPointer = e.pointerId;
-  touchStick.setPointerCapture(e.pointerId);
+  try {
+    touchStick.setPointerCapture(e.pointerId);
+  } catch (_) {}
 });
 touchStick?.addEventListener("pointermove", (e) => {
   if (e.pointerId !== stickPointer) return;
@@ -3571,10 +3612,10 @@ touchStick?.addEventListener("pointermove", (e) => {
   }
   state.touchMoveX = x;
   state.touchMoveY = y;
-  if (touchKnob) touchKnob.style.transform = `translate(${x * 30}px, ${y * 30}px)`;
+  if (touchKnob) touchKnob.style.transform = `translate(${x * 34}px, ${y * 34}px)`;
 });
 const releaseStick = (e) => {
-  if (stickPointer !== null && e.pointerId !== stickPointer) return;
+  if (stickPointer !== null && e && e.pointerId !== stickPointer) return;
   stickPointer = null;
   state.touchMoveX = 0;
   state.touchMoveY = 0;
@@ -3586,27 +3627,33 @@ touchStick?.addEventListener("pointercancel", releaseStick);
 let lookPointer = null;
 let lookX = 0;
 let lookY = 0;
-touchLook?.addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  e.stopPropagation();
+const LOOK_SENS = 2.8;
+function beginLook(e) {
+  if (!state.running || state.paused) return;
   lookPointer = e.pointerId;
   lookX = e.clientX;
   lookY = e.clientY;
-  touchLook.setPointerCapture(e.pointerId);
-});
-touchLook?.addEventListener("pointermove", (e) => {
-  if (e.pointerId !== lookPointer) return;
-  state.mx += (e.clientX - lookX) * 1.2;
-  state.my += (e.clientY - lookY) * 1.2;
+}
+function moveLook(e) {
+  if (lookPointer === null || e.pointerId !== lookPointer) return;
+  state.mx += (e.clientX - lookX) * LOOK_SENS;
+  state.my += (e.clientY - lookY) * LOOK_SENS;
   lookX = e.clientX;
   lookY = e.clientY;
-});
-const releaseLook = (e) => {
-  if (lookPointer !== null && e.pointerId !== lookPointer) return;
+}
+function endLook(e) {
+  if (lookPointer === null) return;
+  if (e && e.pointerId !== lookPointer) return;
   lookPointer = null;
-};
-touchLook?.addEventListener("pointerup", releaseLook);
-touchLook?.addEventListener("pointercancel", releaseLook);
+}
+touchLook?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  beginLook(e);
+});
+window.addEventListener("pointermove", moveLook, { passive: true });
+window.addEventListener("pointerup", endLook);
+window.addEventListener("pointercancel", endLook);
 
 touchFire?.addEventListener("pointerdown", (e) => {
   e.preventDefault();
@@ -3646,11 +3693,12 @@ touchShield?.addEventListener("pointerdown", (e) => {
   if (state.running && !state.paused) startUseItem("shield");
 });
 
-window.addEventListener("resize", () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
+function onViewResize() {
+  resizeView();
+}
+window.addEventListener("resize", onViewResize);
+window.visualViewport?.addEventListener("resize", onViewResize);
+window.visualViewport?.addEventListener("scroll", onViewResize);
 
 buildWorld();
 requestAnimationFrame(loop);
