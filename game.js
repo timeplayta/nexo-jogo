@@ -534,6 +534,8 @@ const ASSET_URLS = {
   arma_escopeta: "blender/glb/arma_escopeta.glb",
   prop_crate: "blender/glb/prop_crate.glb",
   prop_cell: "blender/glb/prop_cell.glb",
+  prop_medkit: "blender/glb/prop_medkit.glb",
+  prop_shield: "blender/glb/prop_shield.glb",
   prop_reactor: "blender/glb/prop_reactor.glb",
   prop_generator: "blender/glb/prop_generator.glb",
   prop_cover: "blender/glb/prop_cover.glb",
@@ -1376,7 +1378,7 @@ function spawnPhase(n) {
     spawnGear("medkit", 16.5, 7.4);
     spawnGear("medkit", 31, 7.2);
     spawnGear("shield", 32, -8.4);
-    spawnEnemy("turret", 20.5, 7);
+    spawnEnemy("turret", 23.2, -2.4);
     spawnEnemy("turret", 27, -7.2);
     spawnEnemy("drone", 30, 0);
     spawnEnemy("drone", 18.8, -6.2);
@@ -1386,8 +1388,8 @@ function spawnPhase(n) {
     openGate("south");
     spawnReactor(-24, 0, 2);
     spawnReactor(0, 24, 1);
-    spawnEnemy("chaser", -20, 5.2, true);
-    spawnEnemy("drone", -28, -4.5, true);
+    spawnEnemy("chaser", -16.8, 3.4, true);
+    spawnEnemy("drone", -24.8, -5.2, true);
     spawnEnemy("chaser", 5, 24.5, true);
     spawnWeapon("rifle", -30.5, 7.2);
     spawnWeapon("escopeta", 7, 28.5);
@@ -1398,8 +1400,8 @@ function spawnPhase(n) {
     spawnGear("shield", -31, -7.2);
     spawnGear("shield", 3.2, 29.2);
     spawnEnemy("chaser", -23.5, -6);
-    spawnEnemy("chaser", -19, 6.5);
-    spawnEnemy("chaser", 6.2, 21.5);
+    spawnEnemy("chaser", -17.2, 7.6);
+    spawnEnemy("chaser", -6.2, 22.5);
     spawnEnemy("drone", -28.5, 6);
     spawnEnemy("turret", -21, -4.5);
   }
@@ -1417,8 +1419,8 @@ function spawnPhase(n) {
     spawnEnemy("heavy", 0, -27.5);
     spawnEnemy("turret", -7, -19);
     spawnEnemy("chaser", 7.2, -19.2);
-    spawnEnemy("drone", -4.5, -21);
-    spawnEnemy("drone", 4.5, -21);
+    spawnEnemy("drone", -8, -18.6);
+    spawnEnemy("drone", 8, -18.6);
   }
   sfx.phase();
   const extra = state.overclock > 0 && n > 1 ? "  ·  OVERCLOCK 9s" : "";
@@ -1507,26 +1509,13 @@ function buildShieldProp() {
   return g;
 }
 
+function gearModel(kind, scale) {
+  const key = kind === "medkit" ? "prop_medkit" : "prop_shield";
+  return cloneAsset(key, scale, false) || (kind === "medkit" ? buildMedkitProp() : buildShieldProp());
+}
+
 function buildUseItem(kind) {
-  const g = new THREE.Group();
-  if (kind === "medkit") {
-    const pack = mesh(new THREE.BoxGeometry(0.16, 0.1, 0.22), metal(0xe4f0e8, { metalness: 0.12, roughness: 0.4 }));
-    const stripe = mesh(new THREE.BoxGeometry(0.162, 0.03, 0.222), emit(0x2dff78, 1.1), 0, 0.03, 0);
-    const crossV = mesh(new THREE.BoxGeometry(0.025, 0.02, 0.09), emit(0xff3a3a, 1.8), 0, 0.06, 0);
-    const crossH = mesh(new THREE.BoxGeometry(0.09, 0.02, 0.025), emit(0xff3a3a, 1.8), 0, 0.06, 0);
-    const vial = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.14, 8), emit(0x6dff9a, 1.2), 0.08, 0.01, 0.02);
-    vial.rotation.z = 0.4;
-    g.add(pack, stripe, crossV, crossH, vial);
-  } else {
-    const plate = mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.03, 6), metal(0x173040, { metalness: 0.9, roughness: 0.18 }));
-    plate.rotation.x = 1.15;
-    const rim = mesh(new THREE.TorusGeometry(0.13, 0.012, 8, 6), emit(0x4ad4ff, 2));
-    rim.rotation.x = 1.15;
-    const core = mesh(new THREE.OctahedronGeometry(0.045), emit(0xb8f4ff, 2.2), 0, 0.02, 0);
-    const grip = mesh(new THREE.BoxGeometry(0.04, 0.08, 0.05), metal(0x1a222b), 0, -0.07, 0.04);
-    g.add(plate, rim, core, grip);
-  }
-  return g;
+  return gearModel(kind, kind === "medkit" ? 0.42 : 0.85);
 }
 
 function gearFull(kind) {
@@ -1539,7 +1528,7 @@ function spawnGear(kind, x, z) {
   const color = kind === "medkit" ? 0x3dff7a : 0x4ad4ff;
   const crate = mesh(new THREE.BoxGeometry(0.86, 0.42, 0.86), metal(0x162028, { roughness: 0.58 }), 0, 0.21, 0);
   const stripe = mesh(new THREE.BoxGeometry(0.88, 0.07, 0.88), emit(color, 1.05), 0, 0.38, 0);
-  const model = kind === "medkit" ? buildMedkitProp() : buildShieldProp();
+  const model = gearModel(kind, kind === "medkit" ? 1.05 : 1.2);
   model.position.set(0, 0.88, 0);
   const halo = mesh(new THREE.TorusGeometry(0.5, 0.018, 8, 20), new THREE.MeshBasicMaterial({ color }), 0, 0.48, 0);
   halo.rotation.x = Math.PI / 2;
@@ -1697,28 +1686,10 @@ function endUseItem() {
 function spawnCore(x, z, first = false, locked = false) {
   const group = new THREE.Group();
   group.position.set(x, 1.08, z);
-  const scale = first ? 1.2 : 1;
-  const cell = mesh(
+  const scale = first ? 1.15 : 1;
+  const cell = cloneAsset("prop_cell", scale, false) || mesh(
     new THREE.CylinderGeometry(0.17 * scale, 0.17 * scale, 0.52 * scale, 12),
     metal(0x1c262e, { roughness: 0.35, metalness: 0.6 })
-  );
-  const band = mesh(
-    new THREE.CylinderGeometry(0.175 * scale, 0.175 * scale, 0.2 * scale, 12),
-    emit(0x2affd0, 1.8)
-  );
-  const capTop = mesh(
-    new THREE.CylinderGeometry(0.06 * scale, 0.06 * scale, 0.08 * scale, 8),
-    metal(0x9aa6ae, { metalness: 0.9, roughness: 0.25 }),
-    0,
-    0.3 * scale,
-    0
-  );
-  const capBot = mesh(
-    new THREE.CylinderGeometry(0.17 * scale, 0.15 * scale, 0.06 * scale, 12),
-    metal(0x10161c),
-    0,
-    -0.29 * scale,
-    0
   );
   const beam = mesh(
     new THREE.CylinderGeometry(0.05, 0.14, 4.4, 8, 1, true),
@@ -1730,7 +1701,7 @@ function spawnCore(x, z, first = false, locked = false) {
   ring.rotation.x = Math.PI / 2;
   ring.position.y = -0.72;
   ring.castShadow = false;
-  group.add(cell, band, capTop, capBot, beam, ring, new THREE.PointLight(0x66ffe0, first ? 4.5 : 2.8, first ? 14 : 10));
+  group.add(cell, beam, ring, new THREE.PointLight(0x66ffe0, first ? 4.5 : 2.8, first ? 14 : 10));
   world.add(group);
   cores.push({ mesh: group, taken: false, baseY: 1.08, locked, cage: locked ? addCage(x, z) : null });
 }
@@ -1890,13 +1861,12 @@ function spawnReinforcements() {
     if (spawned >= n) break;
     const x = px + ox;
     const z = pz + oz;
-    if (pointBlocked(x, 1.2, z)) continue;
-    spawnEnemy(kind, x, z);
+    if (!spawnEnemyNear(kind, x, z)) continue;
     spawned += 1;
   }
   if (spawned < 2) {
-    spawnEnemy("drone", px + 8, pz);
-    spawnEnemy(kind, px - 8, pz);
+    if (spawnEnemyNear("drone", px + 8, pz)) spawned += 1;
+    if (spawned < 2) spawnEnemyNear(kind, px - 8, pz);
   }
 }
 
@@ -2225,17 +2195,84 @@ function pointBlocked(x, y, z) {
   return false;
 }
 
-function canSee(from) {
-  const to = new THREE.Vector3(player.position.x, EYE, player.position.z);
-  const dir = to.clone().sub(from);
-  const dist = dir.length();
-  if (dist < 0.2) return true;
-  dir.normalize();
-  const steps = Math.ceil(dist / 0.35);
-  for (let i = 1; i < steps; i++) {
-    const p = from.clone().addScaledVector(dir, i * 0.35);
-    if (pointBlocked(p.x, p.y, p.z)) return false;
+function segmentBlocked(ax, ay, az, bx, by, bz) {
+  const d = [bx - ax, by - ay, bz - az];
+  const o = [ax, ay, az];
+  for (let n = 0; n < colliders.length; n++) {
+    const c = colliders[n];
+    const mn = [c.min.x, c.min.y, c.min.z];
+    const mx = [c.max.x, c.max.y, c.max.z];
+    let tmin = 0;
+    let tmax = 1;
+    let hit = true;
+    for (let i = 0; i < 3; i++) {
+      if (Math.abs(d[i]) < 1e-8) {
+        if (o[i] < mn[i] || o[i] > mx[i]) {
+          hit = false;
+          break;
+        }
+      } else {
+        let t1 = (mn[i] - o[i]) / d[i];
+        let t2 = (mx[i] - o[i]) / d[i];
+        if (t1 > t2) {
+          const s = t1;
+          t1 = t2;
+          t2 = s;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) {
+          hit = false;
+          break;
+        }
+      }
+    }
+    if (hit) return true;
   }
+  return false;
+}
+
+function canSee(from) {
+  const tx = player.position.x;
+  const ty = EYE;
+  const tz = player.position.z;
+  const dx = tx - from.x;
+  const dy = ty - from.y;
+  const dz = tz - from.z;
+  const dist = Math.hypot(dx, dy, dz);
+  if (dist < 0.45) return true;
+  const inv = 1 / dist;
+  return !segmentBlocked(
+    from.x + dx * inv * 0.3,
+    from.y + dy * inv * 0.3,
+    from.z + dz * inv * 0.3,
+    tx - dx * inv * 0.25,
+    ty - dy * inv * 0.25,
+    tz - dz * inv * 0.25
+  );
+}
+
+function findOpenSpot(x, z) {
+  const y = 1.15;
+  for (const r of [0, 1.4, 2.6, 4, 5.5]) {
+    const n = r === 0 ? 1 : 10;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + r;
+      const px = x + Math.cos(a) * r;
+      const pz = z + Math.sin(a) * r;
+      if (pointBlocked(px, y, pz)) continue;
+      if (pointBlocked(px + 0.5, y, pz) || pointBlocked(px - 0.5, y, pz)) continue;
+      if (pointBlocked(px, y, pz + 0.5) || pointBlocked(px, y, pz - 0.5)) continue;
+      return [px, pz];
+    }
+  }
+  return null;
+}
+
+function spawnEnemyNear(kind, x, z, carriesCell = false) {
+  const spot = findOpenSpot(x, z);
+  if (!spot) return false;
+  spawnEnemy(kind, spot[0], spot[1], carriesCell);
   return true;
 }
 
@@ -2465,10 +2502,11 @@ function shoot() {
 
 function enemyShoot(e) {
   const origin = e.mesh.position.clone();
-  origin.y += e.kind === "turret" ? 1.0 : 0.1;
+  origin.y += e.kind === "turret" ? 1.0 : 0.15;
   const dir = new THREE.Vector3(player.position.x, EYE, player.position.z).sub(origin).normalize();
+  if (segmentBlocked(origin.x, origin.y, origin.z, player.position.x, EYE, player.position.z)) return;
   const bolt = mesh(new THREE.SphereGeometry(e.boltSize, 8, 8), new THREE.MeshBasicMaterial({ color: e.boltColor }));
-  bolt.position.copy(origin).addScaledVector(dir, 0.7);
+  bolt.position.copy(origin).addScaledVector(dir, 0.28);
   bolt.castShadow = false;
   scene.add(bolt);
   enemyShots.push({ mesh: bolt, dir, life: e.shotLife, speed: e.shotSpeed, dmg: e.shotDmg, src: e });
@@ -2476,17 +2514,20 @@ function enemyShoot(e) {
 }
 
 function stepBolt(s, speed, dt, onMove) {
-  const steps = 3;
+  const steps = 4;
   const part = (speed * dt) / steps;
   for (let k = 0; k < steps; k++) {
+    const ax = s.mesh.position.x;
+    const ay = s.mesh.position.y;
+    const az = s.mesh.position.z;
     s.mesh.position.addScaledVector(s.dir, part);
     if (Number.isFinite(s.traveled)) {
       s.traveled += part;
       if (s.traveled > s.range) return "range";
     }
+    if (segmentBlocked(ax, ay, az, s.mesh.position.x, s.mesh.position.y, s.mesh.position.z)) return "wall";
     const r = onMove();
     if (r) return r;
-    if (pointBlocked(s.mesh.position.x, s.mesh.position.y, s.mesh.position.z)) return "wall";
   }
   return null;
 }
@@ -2827,8 +2868,27 @@ function updateEnemies(t, dt) {
       const tooClose = chase && dist < keep;
       if (len > 0.12 && !tooClose) {
         const sp = (chase ? e.chaseSpeed : e.speed) * dt;
-        e.mesh.position.x += (dx / len) * sp;
-        e.mesh.position.z += (dz / len) * sp;
+        const mx = (dx / len) * sp;
+        const mz = (dz / len) * sp;
+        const x0 = e.mesh.position.x;
+        const z0 = e.mesh.position.z;
+        const y = 1.1;
+        if (!segmentBlocked(x0, y, z0, x0 + mx, y, z0 + mz)) {
+          e.mesh.position.x = x0 + mx;
+          e.mesh.position.z = z0 + mz;
+        } else if (!segmentBlocked(x0, y, z0, x0 + mx, y, z0)) {
+          e.mesh.position.x = x0 + mx;
+        } else if (!segmentBlocked(x0, y, z0, x0, y, z0 + mz)) {
+          e.mesh.position.z = z0 + mz;
+        } else {
+          const side = Math.sin(e.phase) > 0 ? 1 : -1;
+          const sx = -mz * side;
+          const sz = mx * side;
+          if (!segmentBlocked(x0, y, z0, x0 + sx, y, z0 + sz)) {
+            e.mesh.position.x = x0 + sx;
+            e.mesh.position.z = z0 + sz;
+          }
+        }
       }
       resolveRadius(e.mesh.position, e.radius, 0.6);
       if (e.kind !== "turret") e.mesh.position.y = e.hoverY + Math.sin(t * 2.2 + e.phase) * (e.kind === "chaser" ? 0.08 : 0.1);
@@ -2839,10 +2899,16 @@ function updateEnemies(t, dt) {
     if (distNow < keep && distNow > 0.001) {
       const nx = (e.mesh.position.x - p.x) / distNow;
       const nz = (e.mesh.position.z - p.z) / distNow;
-      e.mesh.position.x = p.x + nx * keep;
-      e.mesh.position.z = p.z + nz * keep;
-      resolveRadius(e.mesh.position, e.radius, 0.6);
-      distNow = Math.hypot(p.x - e.mesh.position.x, p.z - e.mesh.position.z);
+      const ox = e.mesh.position.x;
+      const oz = e.mesh.position.z;
+      const nxPos = p.x + nx * keep;
+      const nzPos = p.z + nz * keep;
+      if (!segmentBlocked(ox, 1.1, oz, nxPos, 1.1, nzPos)) {
+        e.mesh.position.x = nxPos;
+        e.mesh.position.z = nzPos;
+        resolveRadius(e.mesh.position, e.radius, 0.6);
+        distNow = Math.hypot(p.x - e.mesh.position.x, p.z - e.mesh.position.z);
+      }
     }
 
     e.mesh.lookAt(p.x, e.mesh.position.y, p.z);
@@ -2862,7 +2928,7 @@ function updateEnemies(t, dt) {
       }
     } else e.windup = 0;
 
-    if (e.meleeDmg > 0 && state.grace <= 0 && distNow < e.melee + 0.35 && e.attackCd <= 0.15) {
+    if (e.meleeDmg > 0 && state.grace <= 0 && see && distNow < e.melee + 0.35 && e.attackCd <= 0.15) {
       damage(e.meleeDmg, e.mesh.position, e.label);
       e.attackCd = e.fireCd;
     }
@@ -2884,10 +2950,22 @@ function updateEnemies(t, dt) {
         const push = (minD - d) / 2;
         const nx = dx / d;
         const nz = dz / d;
-        a.mesh.position.x -= nx * push;
-        a.mesh.position.z -= nz * push;
-        b.mesh.position.x += nx * push;
-        b.mesh.position.z += nz * push;
+        const ax0 = a.mesh.position.x;
+        const az0 = a.mesh.position.z;
+        const bx0 = b.mesh.position.x;
+        const bz0 = b.mesh.position.z;
+        const ax1 = ax0 - nx * push;
+        const az1 = az0 - nz * push;
+        const bx1 = bx0 + nx * push;
+        const bz1 = bz0 + nz * push;
+        if (!segmentBlocked(ax0, 1.1, az0, ax1, 1.1, az1)) {
+          a.mesh.position.x = ax1;
+          a.mesh.position.z = az1;
+        }
+        if (!segmentBlocked(bx0, 1.1, bz0, bx1, 1.1, bz1)) {
+          b.mesh.position.x = bx1;
+          b.mesh.position.z = bz1;
+        }
         resolveRadius(a.mesh.position, a.radius, 0.6);
         resolveRadius(b.mesh.position, b.radius, 0.6);
       }
@@ -3173,7 +3251,7 @@ function updateFx(dt) {
     timerLab.classList.toggle("low", state.timer < 20);
     if (state.timer <= 0 && !state.alarm) {
       state.alarm = true;
-      spawnEnemy("chaser", -22, 0);
+      spawnEnemyNear("chaser", -22, 0);
       showBanner("TEMPO ESGOTADO");
       sfx.overheat();
     }
