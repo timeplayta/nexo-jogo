@@ -146,5 +146,11 @@
     }
   </script>
   <script type="module" src="game.js"></script>
+  <script>
+    window.addEventListener("error", () => {
+      const b = document.getElementById("btn-start");
+      if (b) b.textContent = "INICIAR";
+    });
+  </script>
 </body>
 </html>

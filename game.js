@@ -455,13 +455,15 @@ scene.add(player);
 player.add(camera);
 camera.position.set(0, EYE, 0);
 
+let gfxReady = false;
+
 function isMobilePlay() {
   return window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(hover: none)").matches;
 }
 
 function syncPlayMode() {
   document.documentElement.classList.toggle("nexo-touch", isMobilePlay());
-  if (typeof applyQuality === "function") applyQuality();
+  if (gfxReady) applyQuality();
 }
 syncPlayMode();
 window.matchMedia("(pointer: coarse)").addEventListener?.("change", syncPlayMode);
@@ -486,12 +488,14 @@ function viewSize() {
 }
 
 function resizeView() {
-  const { w, h, x, y } = viewSize();
+  const vv = window.visualViewport;
+  const w = Math.max(1, Math.round(vv?.width ?? innerWidth));
+  const h = Math.max(1, Math.round(vv?.height ?? innerHeight));
   if (gameRoot) {
-    gameRoot.style.left = `${x}px`;
-    gameRoot.style.top = `${y}px`;
-    gameRoot.style.width = `${w}px`;
-    gameRoot.style.height = `${h}px`;
+    gameRoot.style.left = "0px";
+    gameRoot.style.top = "0px";
+    gameRoot.style.width = "100%";
+    gameRoot.style.height = "100%";
   }
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -556,12 +560,14 @@ sun.shadow.bias = -0.0002;
 scene.add(sun);
 
 function applyQuality() {
+  if (!gfxReady) return;
   const mobile = isMobilePlay();
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, mobile ? 1.25 : 2));
   renderer.shadowMap.enabled = !mobile;
   sun.castShadow = !mobile;
   dust.visible = !mobile;
 }
+gfxReady = true;
 applyQuality();
 const rim = new THREE.DirectionalLight(0x4ad8c8, 0.22);
 rim.position.set(12, 10, -14);
@@ -660,29 +666,40 @@ function cloneAsset(key, scale = 1, ground = false) {
   return wrapper;
 }
 
+function loadOneAsset(loader, key, url, ms = 8000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    const t = setTimeout(finish, ms);
+    loader.load(
+      url,
+      (gltf) => {
+        clearTimeout(t);
+        assets[key] = prepAsset(gltf.scene);
+        finish();
+      },
+      undefined,
+      (err) => {
+        clearTimeout(t);
+        console.warn("asset fail", key, err);
+        finish();
+      }
+    );
+  });
+}
+
 async function loadAssets() {
   const loader = new GLTFLoader();
-  await Promise.all(
-    Object.entries(ASSET_URLS).map(
-      ([key, url]) =>
-        new Promise((resolve) => {
-          loader.load(
-            url,
-            (gltf) => {
-              assets[key] = prepAsset(gltf.scene);
-              resolve();
-            },
-            undefined,
-            (err) => {
-              console.warn("asset fail", key, err);
-              resolve();
-            }
-          );
-        })
-    )
-  );
+  await Promise.all(Object.entries(ASSET_URLS).map(([key, url]) => loadOneAsset(loader, key, url)));
   try {
-    const res = await fetch("blender/glb/map_station.json");
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch("blender/glb/map_station.json", { signal: ctrl.signal });
+    clearTimeout(t);
     if (res.ok) mapMeta = await res.json();
   } catch (err) {
     console.warn("map meta fail", err);
@@ -3523,34 +3540,66 @@ function loop(now) {
   renderer.render(scene, camera);
 }
 
-function start() {
-  if (isMobilePlay()) enterFullscreen();
-  initAudio();
-  audio.ctx?.resume();
-  startAmbience();
-  menu.classList.add("hidden");
-  endScreen.classList.add("hidden");
-  hud.classList.remove("hidden");
-  resetGame();
-  if (!isMobilePlay()) canvas.requestPointerLock?.();
+function start(e) {
+  e?.preventDefault?.();
+  e?.stopPropagation?.();
+  const now = performance.now();
+  if (now - (start._t || 0) < 350) return;
+  start._t = now;
+  try {
+    if (btnStart) {
+      btnStart.disabled = false;
+      btnStart.textContent = "INICIAR";
+    }
+    if (isMobilePlay()) enterFullscreen();
+    initAudio();
+    audio.ctx?.resume();
+    startAmbience();
+    menu.classList.add("hidden");
+    endScreen.classList.add("hidden");
+    pauseScreen.classList.add("hidden");
+    hud.classList.remove("hidden");
+    resetGame();
+    resizeView();
+    if (!isMobilePlay()) canvas.requestPointerLock?.();
+  } catch (err) {
+    console.warn("start fail", err);
+    menu?.classList.add("hidden");
+    hud?.classList.remove("hidden");
+    state.running = true;
+    state.paused = false;
+  }
 }
 
-btnStart.addEventListener("click", start);
-btnRetry.addEventListener("click", start);
+function bindStart(el) {
+  if (!el) return;
+  el.addEventListener("click", start);
+  el.addEventListener("pointerup", (e) => {
+    if (e.pointerType === "mouse") return;
+    start(e);
+  });
+  el.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse") return;
+    start(e);
+  });
+}
+bindStart(btnStart);
+bindStart(btnRetry);
+menu?.addEventListener("pointerdown", (e) => {
+  if (e.target.closest("#btn-start")) start(e);
+}, { passive: false });
 btnResume.addEventListener("click", () => setPaused(false));
 
 function tryOpenDoor() {
-  if (state.door && !state.door.open) {
-    const d = player.position.distanceTo(state.door.pos);
-    if (d < 4) {
-      const ray = new THREE.Raycaster();
-      ray.setFromCamera(new THREE.Vector2(0, 0), camera);
-      const hits = ray.intersectObject(state.door.mesh, true);
-      if (hits.length > 0) {
-        openSpawnDoor();
-        return true;
-      }
-    }
+  if (!state.door || state.door.open || state.door.opening) return false;
+  const d = player.position.distanceTo(state.door.pos);
+  if (d > 4.2) return false;
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const hits = ray.intersectObject(state.door.mesh, true);
+  if (hits.length > 0 || d < 3.85) {
+    openSpawnDoor();
+    return true;
   }
   return false;
 }
@@ -3558,17 +3607,17 @@ function tryOpenDoor() {
 canvas.addEventListener("mousedown", (e) => {
   if (!state.running || state.paused) return;
   if (e.button !== 0) return;
-  if (isMobilePlay()) {
-    tryOpenDoor();
+  if (tryOpenDoor()) {
+    if (!isMobilePlay()) canvas.requestPointerLock?.();
     return;
   }
+  if (isMobilePlay()) return;
   if (document.pointerLockElement !== canvas) {
     state.dragging = true;
     state.triedLock = true;
     canvas.requestPointerLock();
     return;
   }
-  if (tryOpenDoor()) return;
   state.firing = true;
   shoot();
 });
@@ -3697,8 +3746,9 @@ function onPlayPointerDown(e) {
   let kind = hitStick(e.clientX, e.clientY) ? "stick" : "look";
   if (kind === "stick" && hasKind("stick")) kind = "look";
   if (kind === "look" && hasKind("look")) return;
-  touchPtrs.set(e.pointerId, { kind, x: e.clientX, y: e.clientY });
+  touchPtrs.set(e.pointerId, { kind, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
   if (kind === "stick") applyStick(e.clientX, e.clientY);
+  if (kind === "look") tryOpenDoor();
   e.preventDefault();
 }
 
@@ -3720,12 +3770,13 @@ function onPlayPointerUp(e) {
   if (!p) return;
   touchPtrs.delete(e.pointerId);
   if (p.kind === "stick" && !hasKind("stick")) clearStick();
+  if (p.kind === "look" && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) < 14) tryOpenDoor();
 }
 
 function bindPlayTouch() {
   const opts = { passive: false };
-  const target = gameRoot || window;
-  target.addEventListener("pointerdown", onPlayPointerDown, opts);
+  touchLook?.addEventListener("pointerdown", onPlayPointerDown, opts);
+  touchStick?.addEventListener("pointerdown", onPlayPointerDown, opts);
   window.addEventListener("pointermove", onPlayPointerMove, { passive: true });
   window.addEventListener("pointerup", onPlayPointerUp);
   window.addEventListener("pointercancel", onPlayPointerUp);
@@ -3788,13 +3839,14 @@ requestAnimationFrame(loop);
 
 window.NEXO_DEBUG = { player, state, colliders, assets };
 
-btnStart.disabled = true;
-btnStart.textContent = "CARREGANDO...";
-loadAssets().then(() => {
-  clearWorld();
-  buildWorld();
-  while (gun.children.length) gun.remove(gun.children[0]);
-  gun.add(buildGunModel(state.weapon));
-  btnStart.disabled = false;
-  btnStart.textContent = "INICIAR";
-});
+btnStart.disabled = false;
+btnStart.textContent = "INICIAR";
+loadAssets()
+  .then(() => {
+    if (state.running) return;
+    clearWorld();
+    buildWorld();
+    while (gun.children.length) gun.remove(gun.children[0]);
+    gun.add(buildGunModel(state.weapon));
+  })
+  .catch((err) => console.warn("boot fail", err));
