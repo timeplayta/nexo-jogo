@@ -455,11 +455,27 @@ scene.add(player);
 player.add(camera);
 camera.position.set(0, EYE, 0);
 
-function mobileHudOn() {
-  return window.matchMedia("(pointer: coarse), (max-width: 820px)").matches;
+function isMobilePlay() {
+  return window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(hover: none)").matches;
 }
 
+function syncPlayMode() {
+  document.documentElement.classList.toggle("nexo-touch", isMobilePlay());
+  if (typeof applyQuality === "function") applyQuality();
+}
+syncPlayMode();
+window.matchMedia("(pointer: coarse)").addEventListener?.("change", syncPlayMode);
+window.matchMedia("(hover: none)").addEventListener?.("change", syncPlayMode);
+
 function viewSize() {
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    return {
+      w: Math.max(1, innerWidth),
+      h: Math.max(1, innerHeight),
+      x: 0,
+      y: 0,
+    };
+  }
   const vv = window.visualViewport;
   return {
     w: Math.max(1, Math.round(vv?.width ?? innerWidth)),
@@ -484,6 +500,27 @@ function resizeView() {
   canvas.style.height = "100%";
 }
 resizeView();
+
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function enterFullscreen() {
+  window.scrollTo(0, 0);
+  if (isFullscreen()) {
+    resizeView();
+    return;
+  }
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+  if (!req) {
+    resizeView();
+    return;
+  }
+  Promise.resolve(req.call(el, { navigationUI: "hide" }))
+    .catch(() => {})
+    .finally(() => resizeView());
+}
 
 const world = new THREE.Group();
 scene.add(world);
@@ -517,6 +554,15 @@ sun.shadow.camera.bottom = -40;
 sun.shadow.camera.far = 60;
 sun.shadow.bias = -0.0002;
 scene.add(sun);
+
+function applyQuality() {
+  const mobile = isMobilePlay();
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, mobile ? 1.25 : 2));
+  renderer.shadowMap.enabled = !mobile;
+  sun.castShadow = !mobile;
+  dust.visible = !mobile;
+}
+applyQuality();
 const rim = new THREE.DirectionalLight(0x4ad8c8, 0.22);
 rim.position.set(12, 10, -14);
 scene.add(rim);
@@ -2349,7 +2395,7 @@ function movePlayer(dt) {
   state.lookPitch = THREE.MathUtils.clamp(state.lookPitch - state.my * 0.00205, -1.25, 1.25);
   state.mx = 0;
   state.my = 0;
-  if (mobileHudOn()) {
+  if (isMobilePlay()) {
     state.yaw = state.lookYaw;
     state.pitch = state.lookPitch;
   } else {
@@ -2366,7 +2412,7 @@ function movePlayer(dt) {
   if (pressed("KeyS", "ArrowDown")) _wish.sub(_fwd);
   if (pressed("KeyD", "ArrowRight")) _wish.add(_right);
   if (pressed("KeyA", "ArrowLeft")) _wish.sub(_right);
-  if (Math.abs(state.touchMoveY) > 0.08) _wish.addScaledVector(_fwd, state.touchMoveY);
+  if (Math.abs(state.touchMoveY) > 0.08) _wish.addScaledVector(_fwd, -state.touchMoveY);
   if (Math.abs(state.touchMoveX) > 0.08) _wish.addScaledVector(_right, state.touchMoveX);
   const wishing = _wish.lengthSq() > 0;
   if (wishing) {
@@ -3317,7 +3363,10 @@ function updateFx(dt) {
   for (const p of props) {
     if (p.alive && p.core) p.core.rotation.y += dt * 2.4;
   }
-  updateHpBars();
+  if (!isMobilePlay() || (performance.now() / 90 | 0) !== (state._hudN || 0)) {
+    state._hudN = performance.now() / 90 | 0;
+    updateHpBars();
+  }
 
   for (let i = bits.length - 1; i >= 0; i--) {
     const b = bits[i];
@@ -3339,7 +3388,7 @@ function setPaused(v) {
     document.exitPointerLock?.();
     sfx.hum(99);
   } else {
-    canvas.requestPointerLock?.();
+    if (!isMobilePlay()) canvas.requestPointerLock?.();
   }
 }
 
@@ -3461,9 +3510,12 @@ function loop(now) {
     updateSpawnDoor(dt);
     updateShots(dt);
     updateFx(dt);
-    updateMarker();
-    updateMission();
-    dust.rotation.y += dt * 0.02;
+    state._hudF = (state._hudF || 0) + 1;
+    if (!isMobilePlay() || state._hudF % 2 === 0) {
+      updateMarker();
+      updateMission();
+    }
+    if (dust.visible) dust.rotation.y += dt * 0.02;
   } else {
     renderer.render(scene, camera);
     return;
@@ -3472,6 +3524,7 @@ function loop(now) {
 }
 
 function start() {
+  if (isMobilePlay()) enterFullscreen();
   initAudio();
   audio.ctx?.resume();
   startAmbience();
@@ -3479,7 +3532,7 @@ function start() {
   endScreen.classList.add("hidden");
   hud.classList.remove("hidden");
   resetGame();
-  canvas.requestPointerLock?.();
+  if (!isMobilePlay()) canvas.requestPointerLock?.();
 }
 
 btnStart.addEventListener("click", start);
@@ -3505,7 +3558,7 @@ function tryOpenDoor() {
 canvas.addEventListener("mousedown", (e) => {
   if (!state.running || state.paused) return;
   if (e.button !== 0) return;
-  if (mobileHudOn()) {
+  if (isMobilePlay()) {
     tryOpenDoor();
     return;
   }
@@ -3579,7 +3632,7 @@ for (const button of gearButtons) {
   button.addEventListener("click", () => {
     if (!state.running || state.paused) return;
     startUseItem(button.dataset.gear);
-    canvas.requestPointerLock?.();
+    if (!isMobilePlay()) canvas.requestPointerLock?.();
   });
 }
 
@@ -3587,73 +3640,97 @@ for (const button of hotbarButtons) {
   button.addEventListener("click", () => {
     if (!state.running || state.paused) return;
     switchWeapon(button.dataset.weapon);
-    canvas.requestPointerLock?.();
+    if (!isMobilePlay()) canvas.requestPointerLock?.();
   });
 }
 
-let stickPointer = null;
-touchStick?.addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  stickPointer = e.pointerId;
-  try {
-    touchStick.setPointerCapture(e.pointerId);
-  } catch (_) {}
-});
-touchStick?.addEventListener("pointermove", (e) => {
-  if (e.pointerId !== stickPointer) return;
+const LOOK_SENS = 2.8;
+const touchPtrs = new Map();
+
+function hitStick(x, y) {
+  if (!touchStick) return false;
   const r = touchStick.getBoundingClientRect();
-  let x = (e.clientX - (r.left + r.width / 2)) / (r.width * 0.36);
-  let y = (e.clientY - (r.top + r.height / 2)) / (r.height * 0.36);
-  const len = Math.hypot(x, y);
+  const pad = 28;
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const rad = Math.max(r.width, r.height) * 0.5 + pad;
+  return Math.hypot(x - cx, y - cy) <= rad;
+}
+
+function hitUi(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return false;
+  return !!(el.closest && el.closest("#mobile-controls button, .weapon-hotbar, .inv, #btn-start, #btn-resume, #btn-retry"));
+}
+
+function applyStick(x, y) {
+  if (!touchStick) return;
+  const r = touchStick.getBoundingClientRect();
+  let sx = (x - (r.left + r.width / 2)) / (r.width * 0.36);
+  let sy = (y - (r.top + r.height / 2)) / (r.height * 0.36);
+  const len = Math.hypot(sx, sy);
   if (len > 1) {
-    x /= len;
-    y /= len;
+    sx /= len;
+    sy /= len;
   }
-  state.touchMoveX = x;
-  state.touchMoveY = y;
-  if (touchKnob) touchKnob.style.transform = `translate(${x * 34}px, ${y * 34}px)`;
-});
-const releaseStick = (e) => {
-  if (stickPointer !== null && e && e.pointerId !== stickPointer) return;
-  stickPointer = null;
+  state.touchMoveX = sx;
+  state.touchMoveY = sy;
+  if (touchKnob) touchKnob.style.transform = `translate(${sx * 34}px, ${sy * 34}px)`;
+}
+
+function clearStick() {
   state.touchMoveX = 0;
   state.touchMoveY = 0;
   if (touchKnob) touchKnob.style.transform = "";
-};
-touchStick?.addEventListener("pointerup", releaseStick);
-touchStick?.addEventListener("pointercancel", releaseStick);
+}
 
-let lookPointer = null;
-let lookX = 0;
-let lookY = 0;
-const LOOK_SENS = 2.8;
-function beginLook(e) {
-  if (!state.running || state.paused) return;
-  lookPointer = e.pointerId;
-  lookX = e.clientX;
-  lookY = e.clientY;
+function hasKind(kind) {
+  for (const p of touchPtrs.values()) if (p.kind === kind) return true;
+  return false;
 }
-function moveLook(e) {
-  if (lookPointer === null || e.pointerId !== lookPointer) return;
-  state.mx += (e.clientX - lookX) * LOOK_SENS;
-  state.my += (e.clientY - lookY) * LOOK_SENS;
-  lookX = e.clientX;
-  lookY = e.clientY;
-}
-function endLook(e) {
-  if (lookPointer === null) return;
-  if (e && e.pointerId !== lookPointer) return;
-  lookPointer = null;
-}
-touchLook?.addEventListener("pointerdown", (e) => {
+
+function onPlayPointerDown(e) {
+  if (!isMobilePlay() || !state.running || state.paused) return;
+  if (e.pointerType === "mouse") return;
+  if (touchPtrs.has(e.pointerId)) return;
+  if (hitUi(e.clientX, e.clientY) && !hitStick(e.clientX, e.clientY)) return;
+  let kind = hitStick(e.clientX, e.clientY) ? "stick" : "look";
+  if (kind === "stick" && hasKind("stick")) kind = "look";
+  if (kind === "look" && hasKind("look")) return;
+  touchPtrs.set(e.pointerId, { kind, x: e.clientX, y: e.clientY });
+  if (kind === "stick") applyStick(e.clientX, e.clientY);
   e.preventDefault();
-  e.stopPropagation();
-  beginLook(e);
-});
-window.addEventListener("pointermove", moveLook, { passive: true });
-window.addEventListener("pointerup", endLook);
-window.addEventListener("pointercancel", endLook);
+}
+
+function onPlayPointerMove(e) {
+  const p = touchPtrs.get(e.pointerId);
+  if (!p) return;
+  if (p.kind === "stick") {
+    applyStick(e.clientX, e.clientY);
+  } else {
+    state.mx += (e.clientX - p.x) * LOOK_SENS;
+    state.my += (e.clientY - p.y) * LOOK_SENS;
+    p.x = e.clientX;
+    p.y = e.clientY;
+  }
+}
+
+function onPlayPointerUp(e) {
+  const p = touchPtrs.get(e.pointerId);
+  if (!p) return;
+  touchPtrs.delete(e.pointerId);
+  if (p.kind === "stick" && !hasKind("stick")) clearStick();
+}
+
+function bindPlayTouch() {
+  const opts = { passive: false };
+  const target = gameRoot || window;
+  target.addEventListener("pointerdown", onPlayPointerDown, opts);
+  window.addEventListener("pointermove", onPlayPointerMove, { passive: true });
+  window.addEventListener("pointerup", onPlayPointerUp);
+  window.addEventListener("pointercancel", onPlayPointerUp);
+}
+bindPlayTouch();
 
 touchFire?.addEventListener("pointerdown", (e) => {
   e.preventDefault();
@@ -3694,11 +3771,17 @@ touchShield?.addEventListener("pointerdown", (e) => {
 });
 
 function onViewResize() {
+  if (isMobilePlay() && state.running) {
+    clearTimeout(onViewResize.t);
+    onViewResize.t = setTimeout(resizeView, 150);
+    return;
+  }
   resizeView();
 }
 window.addEventListener("resize", onViewResize);
 window.visualViewport?.addEventListener("resize", onViewResize);
-window.visualViewport?.addEventListener("scroll", onViewResize);
+document.addEventListener("fullscreenchange", onViewResize);
+document.addEventListener("webkitfullscreenchange", onViewResize);
 
 buildWorld();
 requestAnimationFrame(loop);
