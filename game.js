@@ -76,17 +76,17 @@ const LABELS = { drone: "Drone", turret: "Torreta", chaser: "Unidade rápida", h
 const WEAPONS = {
   pistola: {
     name: "PISTOLA", dmg: 1.6, cd: 0.22, mag: 18, heat: 10, pellets: 1,
-    spread: 0.006, recoil: -0.3, reload: 0.95, pickup: 54,
+    spread: 0.006, recoil: -0.3, reload: 0.95, pickup: 24, reserve: 216,
     speed: 48, falloffStart: 10, range: 26, minDamage: 0.55,
   },
   rifle: {
     name: "RIFLE", dmg: 1.35, cd: 0.1, mag: 40, heat: 7, pellets: 1,
-    spread: 0.016, recoil: -0.18, reload: 1.25, pickup: 120,
+    spread: 0.016, recoil: -0.18, reload: 1.25, pickup: 24, reserve: 218,
     speed: 70, falloffStart: 18, range: 48, minDamage: 0.75,
   },
   escopeta: {
     name: "ESCOPETA", dmg: 1.4, cd: 0.68, mag: 10, heat: 25, pellets: 7,
-    spread: 0.06, recoil: -0.55, reload: 1.65, pickup: 40,
+    spread: 0.06, recoil: -0.55, reload: 1.65, pickup: 24, reserve: 77,
     speed: 42, falloffStart: 3.5, range: 16, minDamage: 0.18,
   },
 };
@@ -149,7 +149,9 @@ const state = {
   ammo: 18,
   ownedWeapons: ["pistola"],
   weaponAmmo: { pistola: 18 },
-  reserve: 240,
+  weaponReserve: { pistola: 216, rifle: 0, escopeta: 0 },
+  ammoGranted: { pistola: true },
+  reserve: 216,
   reloading: false,
   reloadT: 0,
   vx: 0,
@@ -988,6 +990,7 @@ function finishReload() {
   const take = Math.min(need, state.reserve);
   state.ammo += take;
   state.reserve -= take;
+  if (state.weaponReserve) state.weaponReserve[state.weapon] = state.reserve;
   state.reloading = false;
   state.reloadT = 0;
   sfx.reloadEnd();
@@ -995,7 +998,11 @@ function finishReload() {
 }
 
 function setWeapon(type, silent = false) {
-  if (state.weapon && state.weaponAmmo) state.weaponAmmo[state.weapon] = state.ammo;
+  if (state.weapon && state.weaponAmmo) {
+    state.weaponAmmo[state.weapon] = state.ammo;
+    if (!state.weaponReserve) state.weaponReserve = {};
+    state.weaponReserve[state.weapon] = state.reserve;
+  }
   const newlyOwned = !state.ownedWeapons.includes(type);
   if (newlyOwned) {
     state.ownedWeapons.push(type);
@@ -1003,10 +1010,18 @@ function setWeapon(type, silent = false) {
   }
   if (!silent) {
     state.weaponAmmo[type] = WEAPONS[type].mag;
-    state.reserve = Math.min(360, state.reserve + WEAPONS[type].pickup);
+    if (!state.ammoGranted) state.ammoGranted = {};
+    if (!state.weaponReserve) state.weaponReserve = {};
+    if (!state.ammoGranted[type]) {
+      state.ammoGranted[type] = true;
+      state.weaponReserve[type] = WEAPONS[type].reserve;
+    } else {
+      state.weaponReserve[type] = (state.weaponReserve[type] || 0) + WEAPONS[type].pickup;
+    }
   }
   state.weapon = type;
   state.ammo = state.weaponAmmo[type] ?? WEAPONS[type].mag;
+  state.reserve = state.weaponReserve?.[type] || 0;
   state.reloading = false;
   state.reloadT = 0;
   mountWeapon(type);
@@ -1912,10 +1927,7 @@ function buildWorld() {
 
 function spawnPhase(n) {
   state.phase = n;
-  if (n > 1) {
-    state.reserve = Math.min(360, state.reserve + 80);
-    retireAliveEnemies();
-  }
+  if (n > 1) retireAliveEnemies();
   state.phaseGot = 0;
   state.phaseNeed = PHASE_NEED[n];
   state.grace = n === 1 ? 1.8 : 1.6;
@@ -1934,6 +1946,9 @@ function spawnPhase(n) {
     spawnWeapon("pistola", 10.2, -5);
     spawnEnemy("drone", 8.4, -8);
     spawnEnemy("drone", -8.6, 8.2);
+    spawnEnemy("drone", 6.4, -4.8);
+    spawnEnemy("drone", -5.2, 5.1);
+    spawnEnemy("chaser", 7.1, 6.4);
     spawnGear("medkit", 6.8, 10.4);
     spawnGear("shield", -6.8, -10.4);
   }
@@ -1953,6 +1968,11 @@ function spawnPhase(n) {
     spawnEnemy("turret", 27, -7.2);
     spawnEnemy("drone", 30, 0);
     spawnEnemy("drone", 18.8, -6.2);
+    spawnEnemy("drone", 21.6, 7.4);
+    spawnEnemy("drone", 16.8, -3.2);
+    spawnEnemy("chaser", 27.2, 6.2);
+    spawnEnemy("chaser", 20.2, -8.2);
+    spawnEnemy("turret", 31.2, -3.6);
   }
   if (n === 3) {
     openGate("west");
@@ -1972,6 +1992,13 @@ function spawnPhase(n) {
     spawnGear("shield", 3.2, 29.2);
     spawnEnemy("turret", -22.4, -5.2);
     spawnEnemy("drone", -28.2, 4.2);
+    spawnEnemy("drone", -26.2, -1.2);
+    spawnEnemy("drone", -20.8, 6.5);
+    spawnEnemy("drone", -3.8, 27.2);
+    spawnEnemy("chaser", -29.2, -4.2);
+    spawnEnemy("chaser", -23.4, 7.4);
+    spawnEnemy("chaser", 6.8, 21.8);
+    spawnEnemy("turret", -30.2, 1.2);
   }
   if (n === 4) {
     openGate("north");
@@ -2432,7 +2459,7 @@ function retireAliveEnemies() {
 function spawnReinforcements() {
   let alive = 0;
   for (const e of enemies) if (e.alive) alive += 1;
-  const room = 7 - alive;
+  const room = 16 - alive;
   if (room <= 0) return;
   const kind = state.phase >= 3 ? "chaser" : "drone";
   const want = Math.min(state.phase >= 3 ? 1 : 2, room);
@@ -4155,9 +4182,11 @@ function resetGame() {
   state.carryingFrom = null;
   state.ownedWeapons = ["pistola"];
   state.weaponAmmo = { pistola: WEAPONS.pistola.mag };
+  state.weaponReserve = { pistola: WEAPONS.pistola.reserve, rifle: 0, escopeta: 0 };
+  state.ammoGranted = { pistola: true };
   state.weapon = "pistola";
   state.ammo = WEAPONS.pistola.mag;
-  state.reserve = 240;
+  state.reserve = WEAPONS.pistola.reserve;
   state.reloading = false;
   state.reloadT = 0;
   state.door = null;
