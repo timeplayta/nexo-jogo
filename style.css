@@ -610,6 +610,166 @@ html.nexo-touch #lock-banner {
 
 html.nexo-touch #mobile-controls {
   display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+html.nexo-touch #touch-look {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 1;
+}
+
+html.nexo-touch #touch-stick {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  width: 118px;
+  height: 118px;
+  border: 2px solid rgba(127, 255, 232, 0.55);
+  border-radius: 50%;
+  background: rgba(4, 12, 16, 0.42);
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 5;
+}
+
+html.nexo-touch #touch-stick i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px;
+  border-radius: 50%;
+  background: rgba(127, 255, 232, 0.7);
+  box-shadow: 0 0 14px rgba(80, 255, 220, 0.5);
+}
+
+html.nexo-touch #mobile-controls button {
+  position: absolute;
+  min-width: 52px;
+  height: 52px;
+  padding: 0 8px;
+  color: #eafffb;
+  background: rgba(8, 24, 30, 0.86);
+  border: 1px solid #7fffe8;
+  border-radius: 12px;
+  font-family: Rajdhani, sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 5;
+}
+
+html.nexo-touch #touch-fire {
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  width: 88px !important;
+  height: 74px !important;
+  font-size: 18px;
+  border-radius: 16px;
+}
+
+html.nexo-touch #touch-reload {
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(100px, calc(env(safe-area-inset-bottom) + 100px));
+  font-size: 16px;
+}
+
+html.nexo-touch #touch-jump {
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(162px, calc(env(safe-area-inset-bottom) + 162px));
+  font-size: 14px;
+}
+
+html.nexo-touch #touch-aim {
+  right: max(108px, calc(env(safe-area-inset-right) + 98px));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  font-size: 15px;
+}
+
+html.nexo-touch #touch-kit {
+  left: max(10px, env(safe-area-inset-left));
+  bottom: max(168px, calc(env(safe-area-inset-bottom) + 168px));
+  width: 56px !important;
+  border-color: #6dff9a;
+  color: #b8ffd0;
+  font-size: 14px;
+}
+
+html.nexo-touch #touch-shield {
+  left: max(74px, calc(env(safe-area-inset-left) + 64px));
+  bottom: max(168px, calc(env(safe-area-inset-bottom) + 168px));
+  width: 56px !important;
+  border-color: #7ad8ff;
+  color: #c4f0ff;
+  font-size: 13px;
+}
+
+html.nexo-touch .weapon-hotbar {
+  top: max(78px, calc(env(safe-area-inset-top) + 68px));
+  right: max(8px, env(safe-area-inset-right));
+  left: auto;
+  bottom: auto;
+  transform: none;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 72px;
+  z-index: 6;
+}
+
+html.nexo-touch .weapon-hotbar button {
+  width: 64px;
+  height: 44px;
+  padding: 4px 3px;
+}
+
+html.nexo-touch .weapon-hotbar button.gear {
+  display: none;
+}
+
+html.nexo-touch .weapon-hotbar button span { font-size: 11px; }
+html.nexo-touch .weapon-hotbar button small { font-size: 9px; }
+html.nexo-touch .weapon-hotbar button b { font-size: 10px; }
+
+html.nexo-touch .inv {
+  display: none;
+}
+
+html.nexo-touch .mission {
+  top: max(8px, env(safe-area-inset-top));
+  width: min(460px, calc(100vw - 84px));
+  padding: 8px 10px;
+}
+
+html.nexo-touch #mission-text { font-size: 15px; }
+
+html.nexo-touch .top-bar {
+  left: max(8px, env(safe-area-inset-left));
+  top: max(78px, calc(env(safe-area-inset-top) + 68px));
+  right: auto;
+  bottom: auto;
+  z-index: 6;
+}
+
+html.nexo-touch .stat { padding: 6px 8px; }
+html.nexo-touch .bar { width: 120px; }
+html.nexo-touch .cores { display: none; }
+
+html.nexo-touch #carry-status {
+  top: max(78px, calc(env(safe-area-inset-top) + 68px));
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  z-index: 6;
 }
 
 @media (pointer: coarse) and (hover: none) {
@@ -623,137 +783,7 @@ html.nexo-touch #mobile-controls {
 
   #mobile-controls {
     display: block;
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 2;
   }
-
-  #touch-look {
-    position: absolute;
-    inset: 0;
-    width: auto;
-    height: auto;
-    color: transparent;
-    font-size: 0;
-    padding: 0;
-    pointer-events: auto;
-    touch-action: none;
-    z-index: 1;
-  }
-
-  #touch-stick {
-    position: absolute;
-    left: max(12px, env(safe-area-inset-left));
-    bottom: max(96px, calc(18px + env(safe-area-inset-bottom)));
-    width: 140px;
-    height: 140px;
-    border: 2px solid rgba(127, 255, 232, 0.55);
-    border-radius: 50%;
-    background: rgba(4, 12, 16, 0.42);
-    pointer-events: auto;
-    touch-action: none;
-    z-index: 5;
-  }
-
-  #touch-stick i {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 58px;
-    height: 58px;
-    margin: -29px;
-    border-radius: 50%;
-    background: rgba(127, 255, 232, 0.7);
-    box-shadow: 0 0 14px rgba(80, 255, 220, 0.5);
-  }
-
-  #mobile-controls button {
-    position: absolute;
-    min-width: 72px;
-    height: 58px;
-    padding: 0 10px;
-    color: #eafffb;
-    background: rgba(8, 24, 30, 0.82);
-    border: 1px solid #7fffe8;
-    border-radius: 12px;
-    font-family: Rajdhani, sans-serif;
-    font-weight: 700;
-    font-size: 16px;
-    letter-spacing: 0.04em;
-    pointer-events: auto;
-    touch-action: none;
-    z-index: 5;
-  }
-
-  #touch-fire {
-    right: max(14px, env(safe-area-inset-right));
-    bottom: max(96px, calc(22px + env(safe-area-inset-bottom)));
-    width: 96px !important;
-    height: 80px !important;
-    font-size: 20px;
-    border-radius: 16px;
-  }
-  #touch-aim {
-    right: max(122px, calc(env(safe-area-inset-right) + 108px));
-    bottom: max(132px, calc(58px + env(safe-area-inset-bottom)));
-    font-size: 16px;
-  }
-  #touch-reload {
-    right: max(122px, calc(env(safe-area-inset-right) + 108px));
-    bottom: max(68px, calc(10px + env(safe-area-inset-bottom)));
-    font-size: 18px;
-  }
-  #touch-jump {
-    right: max(14px, env(safe-area-inset-right));
-    bottom: max(186px, calc(112px + env(safe-area-inset-bottom)));
-    font-size: 15px;
-  }
-  #touch-kit {
-    left: max(164px, calc(env(safe-area-inset-left) + 152px));
-    bottom: max(96px, calc(22px + env(safe-area-inset-bottom)));
-    width: 72px !important;
-    border-color: #6dff9a;
-    color: #b8ffd0;
-    font-size: 16px;
-  }
-  #touch-shield {
-    left: max(164px, calc(env(safe-area-inset-left) + 152px));
-    bottom: max(164px, calc(90px + env(safe-area-inset-bottom)));
-    width: 72px !important;
-    border-color: #7ad8ff;
-    color: #c4f0ff;
-    font-size: 15px;
-  }
-
-  .weapon-hotbar {
-    bottom: max(8px, env(safe-area-inset-bottom));
-    gap: 4px;
-    max-width: calc(100vw - 16px);
-    z-index: 6;
-  }
-  .weapon-hotbar button {
-    width: 62px;
-    height: 48px;
-    padding: 5px 4px;
-  }
-  .weapon-hotbar button span { font-size: 12px; }
-  .weapon-hotbar button small { font-size: 10px; }
-  .weapon-hotbar button b { font-size: 11px; }
-  .weapon-hotbar button.gear { width: 52px; }
-  .inv { right: 8px; bottom: 238px; transform: scale(.82); transform-origin: right bottom; z-index: 6; }
-  .mission { top: max(10px, env(safe-area-inset-top)); width: min(460px, 94vw); padding: 8px 12px; }
-  #mission-text { font-size: 16px; }
-  .top-bar {
-    left: max(8px, env(safe-area-inset-left));
-    right: auto;
-    bottom: max(230px, calc(140px + env(safe-area-inset-bottom)));
-    z-index: 6;
-  }
-  .stat { padding: 6px 8px; }
-  .bar { width: 130px; }
-  .cores { display: none; }
-  #carry-status { bottom: 68px; font-size: 12px; z-index: 6; }
 }
 
 .ammo {

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const canvas = document.getElementById("view");
 const gameRoot = document.getElementById("game-root");
@@ -32,6 +33,7 @@ const carryStatus = document.getElementById("carry-status");
 const weaponNameEl = document.getElementById("weapon-name");
 const ammoCountEl = document.getElementById("ammo-count");
 const ammoLineEl = document.getElementById("ammo-line");
+let ammoReserveEl = document.getElementById("ammo-reserve");
 const hotbarButtons = [...document.querySelectorAll("#weapon-hotbar button[data-weapon]")];
 const gearButtons = [...document.querySelectorAll("#weapon-hotbar button[data-gear]")];
 const shieldFill = document.getElementById("shield-fill");
@@ -175,7 +177,7 @@ const state = {
   useApplied: false,
 };
 
-const audio = { ctx: null, master: null, humGain: null, started: false };
+const audio = { ctx: null, master: null, humGain: null, started: false, voices: 0, maxVoices: 8, buf: {} };
 
 function initAudio() {
   if (audio.ctx) return;
@@ -185,23 +187,127 @@ function initAudio() {
   master.connect(ctx.destination);
   audio.ctx = ctx;
   audio.master = master;
+  bakeSfx();
+}
+
+function oscSample(type, t, freq) {
+  const ph = (t * freq) % 1;
+  if (type === "square") return ph < 0.5 ? 1 : -1;
+  if (type === "sawtooth") return ph * 2 - 1;
+  if (type === "triangle") return 1 - 4 * Math.abs(ph - 0.5);
+  return Math.sin(t * freq * Math.PI * 2);
+}
+
+function mixToneAt(d, sr, freq, vol, type, slide = 0, delay = 0) {
+  const start = (delay * sr) | 0;
+  for (let i = start; i < d.length; i++) {
+    const t = (i - start) / sr;
+    const env = Math.exp(-t * 18);
+    const f = slide ? Math.max(40, freq + slide * ((i - start) / Math.max(1, d.length - start))) : freq;
+    d[i] += oscSample(type, t, f) * vol * env;
+  }
+}
+
+function mixNoise(d, vol, decay = 1.8) {
+  for (let i = 0; i < d.length; i++) d[i] += (Math.random() * 2 - 1) * vol * Math.pow(1 - i / d.length, decay);
+}
+
+function bakeBuf(dur, write) {
+  const sr = audio.ctx.sampleRate;
+  const n = Math.max(1, (sr * dur) | 0);
+  const buf = audio.ctx.createBuffer(1, n, sr);
+  write(buf.getChannelData(0), sr);
+  return buf;
+}
+
+function bakeSfx() {
+  const b = audio.buf;
+  b.pistola = bakeBuf(0.12, (d, sr) => {
+    mixNoise(d, 0.22, 2.2);
+    mixToneAt(d, sr, 720, 0.12, "square", -380);
+    mixToneAt(d, sr, 180, 0.08, "sine");
+  });
+  b.rifle = bakeBuf(0.08, (d, sr) => {
+    mixNoise(d, 0.2, 2.4);
+    mixToneAt(d, sr, 840, 0.1, "square", -300);
+  });
+  b.escopeta = bakeBuf(0.18, (d, sr) => {
+    mixNoise(d, 0.28, 1.6);
+    mixToneAt(d, sr, 160, 0.18, "sawtooth", -60);
+  });
+  b.pickup = bakeBuf(0.26, (d, sr) => {
+    mixToneAt(d, sr, 523, 0.16, "sine", 0, 0);
+    mixToneAt(d, sr, 659, 0.14, "sine", 0, 0.07);
+    mixToneAt(d, sr, 784, 0.13, "triangle", 40, 0.13);
+  });
+  b.dry = bakeBuf(0.08, (d, sr) => {
+    mixToneAt(d, sr, 1200, 0.08, "square");
+    mixToneAt(d, sr, 850, 0.06, "square", 0, 0.03);
+  });
+  b.hitmark = bakeBuf(0.05, (d, sr) => {
+    mixToneAt(d, sr, 1900, 0.1, "square");
+  });
+  b.kitReady = bakeBuf(0.18, (d, sr) => {
+    mixToneAt(d, sr, 420, 0.12, "sine");
+    mixToneAt(d, sr, 640, 0.12, "triangle", 80, 0.05);
+  });
+  b.shieldReady = bakeBuf(0.2, (d, sr) => {
+    mixToneAt(d, sr, 240, 0.12, "triangle");
+    mixToneAt(d, sr, 480, 0.12, "sine", 60, 0.06);
+  });
+  b.droneHit = bakeBuf(0.1, (d, sr) => {
+    mixToneAt(d, sr, 150, 0.13, "square", -40);
+    mixNoise(d, 0.1, 2);
+  });
+  b.droneShot = bakeBuf(0.1, (d, sr) => {
+    mixToneAt(d, sr, 240, 0.14, "sawtooth", -90);
+    mixNoise(d, 0.12, 2);
+  });
+  b.droneDie = bakeBuf(0.32, (d, sr) => {
+    mixToneAt(d, sr, 90, 0.2, "sawtooth", -45);
+    mixNoise(d, 0.18, 1.4);
+  });
+  b.armor = bakeBuf(0.08, (d, sr) => {
+    mixToneAt(d, sr, 140, 0.1, "square");
+    mixNoise(d, 0.08, 2);
+  });
+  b.hit = bakeBuf(0.2, (d, sr) => {
+    mixNoise(d, 0.22, 1.5);
+    mixToneAt(d, sr, 70, 0.2, "sawtooth", -30);
+  });
+}
+
+function playSfx(name) {
+  if (!audio.ctx) return;
+  const buf = audio.buf[name];
+  if (!buf || audio.voices >= audio.maxVoices) return;
+  audio.voices += 1;
+  const src = audio.ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audio.master);
+  src.onended = () => { audio.voices = Math.max(0, audio.voices - 1); };
+  src.start();
 }
 
 function beep(freq, dur, type = "square", vol = 0.16, slide = 0, pan = 0) {
-  if (!audio.ctx) return;
+  if (!audio.ctx || audio.voices >= audio.maxVoices) return;
   const t = audio.ctx.currentTime;
   const o = audio.ctx.createOscillator();
   const g = audio.ctx.createGain();
-  const p = audio.ctx.createStereoPanner();
   o.type = type;
   o.frequency.setValueAtTime(freq, t);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), t + dur);
   g.gain.setValueAtTime(vol, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  p.pan.value = THREE.MathUtils.clamp(pan, -1, 1);
   o.connect(g);
-  g.connect(p);
-  p.connect(audio.master);
+  if (pan) {
+    const p = audio.ctx.createStereoPanner();
+    p.pan.value = THREE.MathUtils.clamp(pan, -1, 1);
+    g.connect(p);
+    p.connect(audio.master);
+  } else g.connect(audio.master);
+  audio.voices += 1;
+  o.onended = () => { audio.voices = Math.max(0, audio.voices - 1); };
   o.start(t);
   o.stop(t + dur);
 }
@@ -219,7 +325,7 @@ function noiseBuffer(dur) {
 }
 
 function noiseBurst(dur = 0.07, vol = 0.16, freq = 1600) {
-  if (!audio.ctx) return;
+  if (!audio.ctx || audio.voices >= audio.maxVoices) return;
   const t = audio.ctx.currentTime;
   const src = audio.ctx.createBufferSource();
   src.buffer = noiseBuffer(dur);
@@ -231,6 +337,8 @@ function noiseBurst(dur = 0.07, vol = 0.16, freq = 1600) {
   src.connect(f);
   f.connect(g);
   g.connect(audio.master);
+  audio.voices += 1;
+  src.onended = () => { audio.voices = Math.max(0, audio.voices - 1); };
   src.start(t);
 }
 
@@ -314,21 +422,10 @@ const sfx = {
     noiseBurst(0.04, 0.08, 400);
   },
   shoot(kind) {
-    if (kind === "escopeta") {
-      noiseBurst(0.16, 0.32, 700);
-      beep(160, 0.14, "sawtooth", 0.2, -60);
-    } else if (kind === "rifle") {
-      noiseBurst(0.06, 0.22, 2200);
-      beep(840, 0.05, "square", 0.1, -300);
-    } else {
-      noiseBurst(0.08, 0.26, 1800);
-      beep(720, 0.06, "square", 0.12, -380);
-      beep(180, 0.09, "sine", 0.08);
-    }
+    playSfx(kind === "escopeta" ? "escopeta" : kind === "rifle" ? "rifle" : "pistola");
   },
   dry() {
-    beep(1200, 0.03, "square", 0.08);
-    beep(850, 0.05, "square", 0.06);
+    playSfx("dry");
   },
   deposit() {
     beep(140, 0.12, "sine", 0.22, -40);
@@ -339,40 +436,33 @@ const sfx = {
     beep(330, 0.2, "sawtooth", 0.14, -180);
   },
   pickup() {
-    beep(523, 0.09, "sine", 0.16);
-    beep(659, 0.11, "sine", 0.14);
-    beep(784, 0.16, "triangle", 0.13, 40);
+    playSfx("pickup");
   },
   hit() {
-    noiseBurst(0.12, 0.24, 300);
-    beep(70, 0.2, "sawtooth", 0.2, -30);
+    playSfx("hit");
   },
-  droneShot(pos) {
-    beep(240, 0.1, "sawtooth", 0.14, -90, panOf(pos));
-    noiseBurst(0.06, 0.13, 900);
+  droneShot() {
+    playSfx("droneShot");
   },
-  droneHit(pos) {
-    beep(150, 0.08, "square", 0.13, -40, panOf(pos));
-    noiseBurst(0.05, 0.1, 1200);
+  droneHit() {
+    playSfx("droneHit");
   },
   droneDie() {
-    beep(90, 0.32, "sawtooth", 0.2, -45);
-    noiseBurst(0.2, 0.2, 500);
+    playSfx("droneDie");
   },
   charge() {
     beep(420, 0.32, "triangle", 0.11, 280);
   },
   hitmark() {
-    beep(1900, 0.045, "square", 0.1);
+    playSfx("hitmark");
   },
   door() {
     beep(80, 0.4, "sawtooth", 0.2, 60);
     noiseBurst(0.15, 0.18, 300);
     beep(120, 0.3, "triangle", 0.15, 80);
   },
-  armor(pos) {
-    beep(140, 0.07, "square", 0.1, 0, panOf(pos));
-    noiseBurst(0.04, 0.08, 800);
+  armor() {
+    playSfx("armor");
   },
   overheat() {
     beep(90, 0.22, "sawtooth", 0.16, -20);
@@ -391,8 +481,7 @@ const sfx = {
     beep(880, 0.2, "triangle", 0.1);
   },
   kitReady() {
-    beep(420, 0.08, "sine", 0.12);
-    beep(640, 0.12, "triangle", 0.12, 80);
+    playSfx("kitReady");
   },
   kitUse() {
     noiseBurst(0.1, 0.12, 1400);
@@ -400,8 +489,7 @@ const sfx = {
     beep(520, 0.22, "triangle", 0.12, 90);
   },
   shieldReady() {
-    beep(240, 0.1, "triangle", 0.12);
-    beep(480, 0.16, "sine", 0.12, 60);
+    playSfx("shieldReady");
   },
   shieldUse() {
     beep(180, 0.18, "sine", 0.16, 80);
@@ -432,8 +520,11 @@ const sfx = {
   },
   hum(dist) {
     if (!audio.humGain) return;
+    const t = audio.ctx.currentTime;
+    if (t - (audio._humT || 0) < 0.1) return;
+    audio._humT = t;
     const vol = state.running && !state.paused ? Math.max(0, (1 - dist / 13) * 0.13) : 0;
-    audio.humGain.gain.setTargetAtTime(vol, audio.ctx.currentTime, 0.08);
+    audio.humGain.gain.setTargetAtTime(vol, t, 0.08);
   },
 };
 
@@ -445,17 +536,23 @@ function panOf(pos) {
   return THREE.MathUtils.clamp((dx * Math.cos(state.yaw) + dz * -Math.sin(state.yaw)) / dist, -1, 1);
 }
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance", alpha: false });
-renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.25));
-renderer.shadowMap.enabled = false;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance", alpha: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+const pmrem = new THREE.PMREMGenerator(renderer);
+const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
+
 const scene = new THREE.Scene();
+scene.environment = roomEnv;
+scene.environmentIntensity = 0.32;
 scene.background = new THREE.Color(0x070b10);
-scene.fog = new THREE.FogExp2(0x070b10, 0.028);
+scene.fog = new THREE.FogExp2(0x070b10, 0.023);
 
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.07, 110);
 const player = new THREE.Object3D();
@@ -541,6 +638,8 @@ function enterFullscreen() {
 
 const world = new THREE.Group();
 scene.add(world);
+const fxLayer = new THREE.Group();
+scene.add(fxLayer);
 const mapLights = [];
 
 // poeira no ar
@@ -559,26 +658,32 @@ const dust = new THREE.Points(
 );
 scene.add(dust);
 
-scene.add(new THREE.AmbientLight(0x1a242e, 0.35));
-scene.add(new THREE.HemisphereLight(0x5a7a8c, 0x0a0e12, 0.55));
-const sun = new THREE.DirectionalLight(0xd8ecf6, 0.55);
-sun.position.set(-10, 24, 10);
-sun.castShadow = false;
-sun.shadow.mapSize.set(512, 512);
-sun.shadow.camera.left = -40;
-sun.shadow.camera.right = 40;
-sun.shadow.camera.top = 40;
-sun.shadow.camera.bottom = -40;
-sun.shadow.camera.far = 60;
-sun.shadow.bias = -0.0002;
+scene.add(new THREE.AmbientLight(0x1a242e, 0.42));
+scene.add(new THREE.HemisphereLight(0x6a8a9c, 0x12161c, 0.46));
+const sun = new THREE.DirectionalLight(0xd8ecf6, 1.05);
+sun.position.set(10, 36, 12);
+sun.target.position.set(0, 0, 0);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -52;
+sun.shadow.camera.right = 52;
+sun.shadow.camera.top = 52;
+sun.shadow.camera.bottom = -52;
+sun.shadow.camera.near = 8;
+sun.shadow.camera.far = 90;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.035;
 scene.add(sun);
+scene.add(sun.target);
 
 function applyQuality() {
   if (!gfxReady) return;
   const mobile = isMobilePlay();
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, mobile ? 1 : 1.25));
-  renderer.shadowMap.enabled = false;
-  sun.castShadow = false;
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, mobile ? 1.15 : 1.5));
+  renderer.shadowMap.enabled = !mobile;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  sun.castShadow = !mobile;
+  sun.shadow.mapSize.set(mobile ? 512 : 2048, mobile ? 512 : 2048);
   dust.visible = !mobile;
 }
 gfxReady = true;
@@ -619,8 +724,8 @@ const emit = (color, intensity = 1.4) =>
 function mesh(geo, mat, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
-  m.castShadow = false;
-  m.receiveShadow = false;
+  m.castShadow = true;
+  m.receiveShadow = true;
   return m;
 }
 
@@ -646,11 +751,12 @@ const assets = {};
 let assetsReady = false;
 let mapMeta = null;
 
-function prepAsset(root) {
+function prepAsset(root, keepLights = false) {
+  const dropLights = [];
   root.traverse((o) => {
     if (o.isMesh) {
-      o.castShadow = false;
-      o.receiveShadow = false;
+      o.castShadow = true;
+      o.receiveShadow = true;
       o.frustumCulled = true;
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -659,8 +765,20 @@ function prepAsset(root) {
         }
       }
     }
-    if (o.isLight) o.intensity *= 0.35;
+    if (o.isLight) {
+      if (keepLights) o.intensity *= 0.35;
+      else dropLights.push(o);
+    }
   });
+  for (const L of dropLights) L.parent?.remove(L);
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (!box.isEmpty()) {
+    root.userData.bbCenterX = (box.min.x + box.max.x) * 0.5;
+    root.userData.bbCenterY = (box.min.y + box.max.y) * 0.5;
+    root.userData.bbCenterZ = (box.min.z + box.max.z) * 0.5;
+    root.userData.bbMinY = box.min.y;
+  }
   return root;
 }
 
@@ -670,15 +788,19 @@ function cloneAsset(key, scale = 1, ground = false) {
   const wrapper = new THREE.Group();
   const c = src.clone(true);
   wrapper.add(c);
-  const box = new THREE.Box3().setFromObject(wrapper);
-  if (!box.isEmpty()) {
-    const center = box.getCenter(new THREE.Vector3());
-    c.position.x -= center.x;
-    c.position.z -= center.z;
-    if (ground) c.position.y -= box.min.y;
-    else c.position.y -= center.y;
+  const u = src.userData;
+  if (u.bbCenterX != null) {
+    c.position.x -= u.bbCenterX;
+    c.position.z -= u.bbCenterZ;
+    if (ground) c.position.y -= u.bbMinY;
+    else c.position.y -= u.bbCenterY;
   }
   wrapper.scale.setScalar(scale);
+  wrapper.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+  });
   return wrapper;
 }
 
@@ -695,7 +817,7 @@ function loadOneAsset(loader, key, url, ms = 8000) {
       url,
       (gltf) => {
         clearTimeout(t);
-        assets[key] = prepAsset(gltf.scene);
+        assets[key] = prepAsset(gltf.scene, key === "map_station");
         finish();
       },
       undefined,
@@ -721,6 +843,7 @@ async function loadAssets() {
     console.warn("map meta fail", err);
   }
   assetsReady = true;
+  for (const t of ["pistola", "rifle", "escopeta"]) getViewGun(t);
 }
 
 function buildGunModel(type) {
@@ -790,6 +913,28 @@ function buildGunModel(type) {
   return g;
 }
 
+const gunViewModels = Object.create(null);
+const gunAimPoints = Object.create(null);
+
+function getViewGun(type) {
+  if (!gunViewModels[type]) gunViewModels[type] = buildGunModel(type);
+  return gunViewModels[type];
+}
+
+function mountWeapon(type) {
+  if (gun.userData.mounted === type) return;
+  const model = getViewGun(type);
+  while (gun.children.length) gun.remove(gun.children[0]);
+  gun.add(model);
+  attachMuzzleFlash(type, model);
+  if (gunAimPoints[type]) gun.userData.aimPoint = gunAimPoints[type];
+  else {
+    calibrateWeaponAim(type, model);
+    gunAimPoints[type] = gun.userData.aimPoint;
+  }
+  gun.userData.mounted = type;
+}
+
 function updateHotbar() {
   for (const button of hotbarButtons) {
     const type = button.dataset.weapon;
@@ -797,25 +942,32 @@ function updateHotbar() {
     const ammo = state.weaponAmmo[type];
     button.classList.toggle("locked", !owned);
     button.classList.toggle("active", owned && state.weapon === type);
-    const info = button.querySelector("small");
+    const info = button._info || (button._info = button.querySelector("small"));
     if (info) info.textContent = owned ? `${ammo ?? WEAPONS[type].mag} BALAS` : "BLOQUEADO";
   }
 }
 
-function updateWeaponHud() {
+function tickAmmoHud() {
   state.weaponAmmo[state.weapon] = state.ammo;
-  weaponNameEl.textContent = WEAPONS[state.weapon].name;
-  ammoCountEl.textContent = state.reloading ? "..." : String(state.ammo);
-  ammoLineEl.classList.toggle("low", state.ammo <= 3 && !state.reloading);
-  let resEl = document.getElementById("ammo-reserve");
-  if (!resEl) {
-    resEl = document.createElement("span");
-    resEl.id = "ammo-reserve";
-    resEl.style.marginLeft = "6px";
-    resEl.style.opacity = "0.7";
-    ammoLineEl.appendChild(resEl);
+  setText(ammoCountEl, state.reloading ? "..." : String(state.ammo));
+  const low = state.ammo <= 3 && !state.reloading;
+  if (ammoLineEl._low !== low) {
+    ammoLineEl._low = low;
+    ammoLineEl.classList.toggle("low", low);
   }
-  resEl.textContent = `/ ${state.reserve}`;
+  if (!ammoReserveEl) {
+    ammoReserveEl = document.createElement("span");
+    ammoReserveEl.id = "ammo-reserve";
+    ammoReserveEl.style.marginLeft = "6px";
+    ammoReserveEl.style.opacity = "0.7";
+    ammoLineEl.appendChild(ammoReserveEl);
+  }
+  setText(ammoReserveEl, `/ ${state.reserve}`);
+}
+
+function updateWeaponHud() {
+  tickAmmoHud();
+  setText(weaponNameEl, WEAPONS[state.weapon].name);
   updateHotbar();
 }
 
@@ -857,11 +1009,7 @@ function setWeapon(type, silent = false) {
   state.ammo = state.weaponAmmo[type] ?? WEAPONS[type].mag;
   state.reloading = false;
   state.reloadT = 0;
-  while (gun.children.length) gun.remove(gun.children[0]);
-  const model = buildGunModel(type);
-  gun.add(model);
-  attachMuzzleFlash(type, model);
-  calibrateWeaponAim(type, model);
+  mountWeapon(type);
   updateWeaponHud();
   if (!silent) {
     sfx.pickup();
@@ -879,7 +1027,6 @@ function switchWeapon(type) {
 const gun = new THREE.Group();
 camera.add(gun);
 gun.position.copy(VIEW_POSES.pistola.hip);
-gun.add(buildGunModel("pistola"));
 
 const itemHand = new THREE.Group();
 camera.add(itemHand);
@@ -943,14 +1090,14 @@ function calibrateWeaponAim(type, model) {
   gun.userData.aimPoint = new THREE.Vector3(-local.x, -local.y, VIEW_POSES[type].aim.z);
 }
 
-attachMuzzleFlash("pistola", gun.children[0]);
-calibrateWeaponAim("pistola", gun.children[0]);
+mountWeapon("pistola");
 
 const colliders = [];
 const gates = [];
 const cores = [];
 const reactors = [];
 const enemies = [];
+const spawnQ = [];
 const props = [];
 const shots = [];
 const enemyShots = [];
@@ -975,19 +1122,27 @@ const _guideA = new THREE.Vector3();
 const _guideB = new THREE.Vector3();
 
 function takeMesh(pool, make) {
-  const m = pool.pop();
-  if (m) {
-    m.visible = true;
-    return m;
+  let m = pool.pop();
+  if (!m) {
+    m = make();
+    fxLayer.add(m);
   }
-  return make();
+  m.visible = true;
+  return m;
 }
 
 function recycle(m, pool) {
   if (!m) return;
   m.visible = false;
-  if (m.parent) m.parent.remove(m);
   if (pool.length < 96) pool.push(m);
+}
+
+function retirePickup(obj) {
+  if (!obj) return;
+  obj.traverse((o) => {
+    if (o.isLight) o.intensity = 0;
+    else if (o.isMesh || o.isLine || o.isSprite || o.isPoints) o.visible = false;
+  });
 }
 
 function bitMaterial(color) {
@@ -1067,6 +1222,8 @@ function wallTex() {
 
 function addSolid(x, y, z, w, h, d, mat, collide = true) {
   const m = mesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
   world.add(m);
   let col = null;
   if (collide) {
@@ -1155,13 +1312,68 @@ function addZoneMark(x, z, labelColor) {
   addStrip(x, 0.06, z, 1.2, 0.02, 0.12, 0xf2fbff);
 }
 
+const GATE_LOOK = {
+  east: 0xff7a2e,
+  west: 0x3d8cff,
+  south: 0xb06bff,
+  north: 0xff3a3a,
+};
+
 function addGate(id, x, z, w, h, d) {
-  const gateMat = metal(0x1a1010, { roughness: 0.4, metalness: 0.55, emissive: 0x3a0808, emissiveIntensity: 0.35 });
-  const { mesh: m, col } = addSolid(x, h / 2, z, w, h, d, gateMat);
-  const strip = mesh(new THREE.BoxGeometry(w * 0.7, 0.06, d * 0.7), emit(0xff3a3a, 2), 0, h * 0.22, 0);
-  strip.castShadow = false;
-  m.add(strip);
-  gates.push({ id, mesh: m, col, pos: new THREE.Vector3(x, h / 2, z) });
+  // O vão da parede é 5.2 m. A chapa antiga tinha 4.8 e deixava fresta dos dois lados.
+  const alongX = w >= d;
+  const span = 5.72;
+  const thick = 0.84;
+  const height = 5.16;
+  const cy = height / 2 - 0.04;
+  const accent = GATE_LOOK[id] || 0xff3a3a;
+  const bodyMat = metal(0x141a22, { roughness: 0.4, metalness: 0.74 });
+  const edgeMat = metal(0x0b1016, { roughness: 0.32, metalness: 0.86 });
+  const frameMat = metal(0x2c3640, { roughness: 0.3, metalness: 0.84 });
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+  if (!alongX) group.rotation.y = Math.PI / 2;
+
+  const slab = mesh(new THREE.BoxGeometry(span, height, thick), bodyMat, 0, cy, 0);
+  group.add(slab);
+  const face = thick / 2 + 0.012;
+  const leafW = 2.62;
+  for (const side of [1, -1]) {
+    for (const hand of [-1, 1]) {
+      const lx = hand * 1.34;
+      const leaf = mesh(new THREE.BoxGeometry(leafW, 4.55, 0.05), edgeMat, lx, cy, side * face);
+      group.add(leaf);
+      const inset = mesh(new THREE.BoxGeometry(2.15, 3.15, 0.03), bodyMat, lx, cy + 0.05, side * (face + 0.03));
+      group.add(inset);
+      for (let i = -1; i <= 1; i++) {
+        const brace = mesh(new THREE.BoxGeometry(1.35, 0.07, 0.028), frameMat, lx, cy + i * 0.72, side * (face + 0.05));
+        brace.rotation.z = hand * 0.48;
+        group.add(brace);
+      }
+    }
+    const seam = mesh(new THREE.BoxGeometry(0.16, 4.7, 0.07), frameMat, 0, cy, side * (face + 0.02));
+    const railT = mesh(new THREE.BoxGeometry(span - 0.2, 0.16, 0.06), frameMat, 0, cy + 2.28, side * (face + 0.02));
+    const railB = mesh(new THREE.BoxGeometry(span - 0.2, 0.16, 0.06), frameMat, 0, cy - 2.22, side * (face + 0.02));
+    const strip = mesh(new THREE.BoxGeometry(span * 0.62, 0.045, 0.02), emit(accent, 1.05), 0, 0.38, side * (face + 0.055));
+    strip.castShadow = false;
+    group.add(seam, railT, railB, strip);
+  }
+  group.traverse((o) => {
+    if (!o.isMesh) return;
+    const glow = o.material?.emissive && o.material.emissive.r + o.material.emissive.g + o.material.emissive.b > 0.2;
+    o.castShadow = !glow;
+    o.receiveShadow = true;
+  });
+  world.add(group);
+
+  const hw = alongX ? span / 2 : thick / 2;
+  const hd = alongX ? thick / 2 : span / 2;
+  const col = {
+    min: new THREE.Vector3(x - hw, -0.04, z - hd),
+    max: new THREE.Vector3(x + hw, -0.04 + height, z + hd),
+  };
+  colliders.push(col);
+  gates.push({ id, mesh: group, col, pos: new THREE.Vector3(x, cy, z) });
 }
 
 function openGate(id) {
@@ -1171,7 +1383,7 @@ function openGate(id) {
   world.remove(g.mesh);
   const i = colliders.indexOf(g.col);
   if (i >= 0) colliders.splice(i, 1);
-  spawnBits(g.pos, 0xff5a3a, 18);
+  spawnBits(g.pos, 0xff5a3a, 8);
 }
 
 function openSpawnDoor() {
@@ -1242,6 +1454,11 @@ function buildSpawnDoor(withFrame = true) {
     }
   }
   door.add(left, right);
+  door.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+  });
   world.add(door);
 
   const statusMat = emit(0xff3030, 2.8);
@@ -1272,6 +1489,197 @@ function buildSpawnDoor(withFrame = true) {
   };
 }
 
+function stationCanvas(draw, size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  draw(c.getContext("2d"), size);
+  return c;
+}
+
+function stationMaps() {
+  if (stationMaps.cache) return stationMaps.cache;
+  const colorOf = (canvas) => {
+    const t = new THREE.CanvasTexture(canvas);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 8;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const roughOf = (canvas) => {
+    const t = new THREE.CanvasTexture(canvas);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 4;
+    t.colorSpace = THREE.NoColorSpace;
+    return t;
+  };
+  const floorC = stationCanvas((g, s) => {
+    g.fillStyle = "#141b22";
+    g.fillRect(0, 0, s, s);
+    const n = 4;
+    const t = s / n;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const shade = 18 + ((x * 3 + y * 5) % 5) * 2;
+        g.fillStyle = `rgb(${shade},${shade + 4},${shade + 8})`;
+        g.fillRect(x * t + 3, y * t + 3, t - 6, t - 6);
+        g.strokeStyle = "rgba(120, 160, 170, 0.16)";
+        g.strokeRect(x * t + 6, y * t + 6, t - 12, t - 12);
+      }
+    }
+    for (let i = 0; i < 140; i++) {
+      g.fillStyle = `rgba(210,220,230,${0.03 + Math.random() * 0.05})`;
+      g.fillRect(Math.random() * s, Math.random() * s, 4 + Math.random() * 28, 1);
+    }
+  }, 512);
+  const floorR = stationCanvas((g, s) => {
+    g.fillStyle = "#c8c8c8";
+    g.fillRect(0, 0, s, s);
+    const n = 4;
+    const t = s / n;
+    g.strokeStyle = "#6a6a6a";
+    g.lineWidth = 3;
+    for (let i = 0; i <= n; i++) {
+      g.beginPath();
+      g.moveTo(i * t, 0);
+      g.lineTo(i * t, s);
+      g.moveTo(0, i * t);
+      g.lineTo(s, i * t);
+      g.stroke();
+    }
+    for (let i = 0; i < 40; i++) {
+      g.fillStyle = `rgba(40,40,40,${0.15 + Math.random() * 0.3})`;
+      g.fillRect(Math.random() * s, Math.random() * s, 8 + Math.random() * 40, 2);
+    }
+  }, 512);
+  const wallC = stationCanvas((g, s) => {
+    g.fillStyle = "#1c262e";
+    g.fillRect(0, 0, s, s);
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 2; x++) {
+        const px = 10 + x * 250;
+        const py = 12 + y * 164;
+        const alt = (x + y) % 2 ? 34 : 28;
+        g.fillStyle = `rgb(${alt},${alt + 6},${alt + 12})`;
+        g.fillRect(px, py, 230, 146);
+        g.strokeStyle = "rgba(150, 180, 190, 0.2)";
+        g.strokeRect(px + 8, py + 8, 214, 130);
+        g.fillStyle = "rgba(0,0,0,0.28)";
+        g.fillRect(px, py + 132, 230, 10);
+        g.fillStyle = "rgba(180,200,210,0.35)";
+        for (const [rx, ry] of [[px + 12, py + 12], [px + 214, py + 12], [px + 12, py + 128], [px + 214, py + 128]]) {
+          g.beginPath();
+          g.arc(rx, ry, 2.2, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    }
+  }, 512);
+  const wallR = stationCanvas((g, s) => {
+    g.fillStyle = "#b4b4b4";
+    g.fillRect(0, 0, s, s);
+    g.fillStyle = "#8a8a8a";
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 2; x++) g.fillRect(10 + x * 250, 12 + y * 164, 230, 146);
+    }
+  }, 256);
+  const ceilC = stationCanvas((g, s) => {
+    g.fillStyle = "#12181e";
+    g.fillRect(0, 0, s, s);
+    const n = 3;
+    const t = s / n;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        g.fillStyle = (x + y) % 2 ? "#1a222a" : "#161e26";
+        g.fillRect(x * t + 4, y * t + 4, t - 8, t - 8);
+      }
+    }
+  }, 256);
+  const trimC = stationCanvas((g, s) => {
+    g.fillStyle = "#2a343c";
+    g.fillRect(0, 0, s, s);
+    g.fillStyle = "rgba(0,0,0,0.35)";
+    for (let y = 8; y < s; y += 18) g.fillRect(0, y, s, 2);
+  }, 128);
+  const trimR = stationCanvas((g, s) => {
+    g.fillStyle = "#9a9a9a";
+    g.fillRect(0, 0, s, s);
+    g.fillStyle = "#5c5c5c";
+    for (let y = 8; y < s; y += 18) g.fillRect(0, y, s, 2);
+  }, 128);
+  stationMaps.cache = {
+    floor: { color: colorOf(floorC), rough: roughOf(floorR) },
+    wall: { color: colorOf(wallC), rough: roughOf(wallR) },
+    ceil: { color: colorOf(ceilC), rough: roughOf(wallR) },
+    trim: { color: colorOf(trimC), rough: roughOf(trimR) },
+  };
+  return stationMaps.cache;
+}
+
+function dressStation(root) {
+  const maps = stationMaps();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position || !o.geometry.attributes.normal) return;
+    const pos = o.geometry.attributes.position;
+    const nor = o.geometry.attributes.normal;
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const ax = Math.abs(nor.getX(i));
+      const ay = Math.abs(nor.getY(i));
+      const az = Math.abs(nor.getZ(i));
+      if (ay >= ax && ay >= az) {
+        uv[i * 2] = x * 0.5;
+        uv[i * 2 + 1] = z * 0.5;
+      } else if (ax >= az) {
+        uv[i * 2] = z * 0.5;
+        uv[i * 2 + 1] = y * 0.5;
+      } else {
+        uv[i * 2] = x * 0.5;
+        uv[i * 2 + 1] = y * 0.5;
+      }
+    }
+    o.geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    const next = list.map((m) => {
+      const glow = m?.emissive && m.emissive.r + m.emissive.g + m.emissive.b > 0.04;
+      if (!m || glow) return m;
+      const n = (m.name || "").toLowerCase();
+      let kind = null;
+      if (n.includes("floor") || n.includes("seam")) kind = "floor";
+      else if (n.includes("ceil")) kind = "ceil";
+      else if (n.includes("panel") || n.includes("wall") || n.includes("crate")) kind = "wall";
+      else if (n.includes("trim") || n.includes("frame")) kind = "trim";
+      if (!kind) return m;
+      const copy = m.clone();
+      copy.map = maps[kind].color;
+      copy.roughnessMap = maps[kind].rough;
+      copy.color.set(0xffffff);
+      if (kind === "floor") {
+        copy.metalness = 0.2;
+        copy.roughness = 0.78;
+        copy.envMapIntensity = 0.32;
+      } else if (kind === "ceil") {
+        copy.metalness = 0.24;
+        copy.roughness = 0.72;
+        copy.envMapIntensity = 0.28;
+      } else if (kind === "wall") {
+        copy.metalness = 0.36;
+        copy.roughness = 0.6;
+        copy.envMapIntensity = 0.38;
+      } else {
+        copy.metalness = 0.7;
+        copy.roughness = 0.36;
+        copy.envMapIntensity = 0.5;
+      }
+      copy.needsUpdate = true;
+      return copy;
+    });
+    o.material = Array.isArray(o.material) ? next : next[0];
+  });
+}
+
 function mountBlenderMap() {
   const src = assets.map_station;
   if (!src || !mapMeta?.boxes) return false;
@@ -1279,9 +1687,18 @@ function mountBlenderMap() {
   root.name = "station_map";
   root.traverse((o) => {
     if (!o.isMesh) return;
-    o.castShadow = false;
-    o.receiveShadow = typeof o.name === "string" && o.name.startsWith("map_floor");
+    o.castShadow = true;
+    o.receiveShadow = true;
+    let p = o;
+    while (p) {
+      if (typeof p.name === "string" && p.name.startsWith("map_floor")) {
+        o.castShadow = false;
+        break;
+      }
+      p = p.parent;
+    }
   });
+  dressStation(root);
   world.add(root);
   for (const b of mapMeta.boxes) {
     colliders.push({
@@ -1293,7 +1710,7 @@ function mountBlenderMap() {
     const x = entry[0];
     const z = entry[1];
     const y = entry.length > 2 ? entry[2] : 4.1;
-    const p = new THREE.PointLight(0xd8ecff, 1.4, 14, 1.8);
+    const p = new THREE.PointLight(0xd8ecff, 1.7, 16, 1.6);
     p.position.set(x, y, z);
     world.add(p);
     mapLights.push(p);
@@ -1453,6 +1870,11 @@ function buildWorld() {
     }
   }
   door.add(left, right);
+  door.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+  });
   world.add(door);
 
   const statusMat = emit(0xff3030, 2.8);
@@ -1490,11 +1912,14 @@ function buildWorld() {
 
 function spawnPhase(n) {
   state.phase = n;
-  if (n > 1) state.reserve = Math.min(360, state.reserve + 80);
+  if (n > 1) {
+    state.reserve = Math.min(360, state.reserve + 80);
+    retireAliveEnemies();
+  }
   state.phaseGot = 0;
   state.phaseNeed = PHASE_NEED[n];
-  state.grace = n === 1 ? 1.8 : 0.55;
-  state.timer = n === 3 ? 80 : 0;
+  state.grace = n === 1 ? 1.8 : 1.6;
+  state.timer = n === 3 ? 110 : 0;
   state.alarm = false;
   state.carrying = false;
   state.carryingFrom = null;
@@ -1515,7 +1940,7 @@ function spawnPhase(n) {
   if (n === 2) {
     openGate("east");
     spawnReactor(24, 0, 3);
-    spawnGenerator(29.5, 0);
+    spawnGenerator(26.2, 7.6);
     spawnEnemy("drone", 18.5, 5, true);
     spawnEnemy("drone", 26, -5.2, true);
     spawnEnemy("chaser", 29.2, 4, true);
@@ -1534,9 +1959,9 @@ function spawnPhase(n) {
     openGate("south");
     spawnReactor(-24, 0, 2);
     spawnReactor(0, 24, 1);
-    spawnEnemy("chaser", -16.8, 3.4, true);
-    spawnEnemy("drone", -24.8, -5.2, true);
-    spawnEnemy("chaser", 5, 24.5, true);
+    spawnEnemy("drone", -25.4, -5.6, true);
+    spawnEnemy("chaser", -27.6, 5.4, true);
+    spawnEnemy("chaser", 4.6, 26.8, true);
     spawnWeapon("rifle", -30.5, 7.2);
     spawnWeapon("escopeta", 7, 28.5);
     spawnWeapon("pistola", -5.2, 19);
@@ -1545,11 +1970,8 @@ function spawnPhase(n) {
     spawnGear("medkit", -16.5, 7.8);
     spawnGear("shield", -31, -7.2);
     spawnGear("shield", 3.2, 29.2);
-    spawnEnemy("chaser", -23.5, -6);
-    spawnEnemy("chaser", -17.2, 7.6);
-    spawnEnemy("chaser", -6.2, 22.5);
-    spawnEnemy("drone", -28.5, 6);
-    spawnEnemy("turret", -21, -4.5);
+    spawnEnemy("turret", -22.4, -5.2);
+    spawnEnemy("drone", -28.2, 4.2);
   }
   if (n === 4) {
     openGate("north");
@@ -1573,6 +1995,7 @@ function spawnPhase(n) {
   showBanner(`FASE ${n} — ${PHASE_NAMES[n]}${extra}`);
   showStory(STORY[n]);
   updateHudPhase();
+  warmRenderer();
 }
 
 function nextPhase() {
@@ -1599,9 +2022,7 @@ function spawnWeapon(type, x, z) {
   const halo = mesh(new THREE.TorusGeometry(0.55, 0.02, 8, 24), new THREE.MeshBasicMaterial({ color: 0xffa040 }), 0, 0.55, 0);
   halo.rotation.x = Math.PI / 2;
   halo.castShadow = false;
-  const glow = new THREE.PointLight(0xffa040, 1.7, 7);
-  glow.position.y = 1.1;
-  g.add(crate, stripe, model, halo, glow);
+  g.add(crate, stripe, model, halo);
   world.add(g);
   weaponPickups.push({ mesh: g, model, type, taken: false });
 }
@@ -1614,7 +2035,7 @@ function updateWeapons(t, dt) {
     const d = Math.hypot(w.mesh.position.x - player.position.x, w.mesh.position.z - player.position.z);
     if (d < 1.6) {
       w.taken = true;
-      world.remove(w.mesh);
+      retirePickup(w.mesh);
       setWeapon(w.type);
     }
   }
@@ -1679,9 +2100,7 @@ function spawnGear(kind, x, z) {
   const halo = mesh(new THREE.TorusGeometry(0.5, 0.018, 8, 20), new THREE.MeshBasicMaterial({ color }), 0, 0.48, 0);
   halo.rotation.x = Math.PI / 2;
   halo.castShadow = false;
-  const glow = new THREE.PointLight(color, 1.5, 6.5);
-  glow.position.y = 1.0;
-  g.add(crate, stripe, model, halo, glow);
+  g.add(crate, stripe, model, halo);
   world.add(g);
   gearPickups.push({ mesh: g, model, kind, taken: false });
 }
@@ -1689,7 +2108,7 @@ function spawnGear(kind, x, z) {
 function takeGear(g) {
   if (g.taken || gearFull(g.kind)) return false;
   g.taken = true;
-  world.remove(g.mesh);
+  retirePickup(g.mesh);
   if (g.kind === "medkit") {
     state.medkits += 1;
     sfx.kitReady();
@@ -1699,7 +2118,9 @@ function takeGear(g) {
     sfx.shieldReady();
     showBanner("ESCUDO — 5 PARA ATIVAR");
   }
-  spawnBits(g.mesh.position.clone().setY(0.9), g.kind === "medkit" ? 0x3dff7a : 0x4ad4ff, 12);
+  _v1.copy(g.mesh.position);
+  _v1.y = 0.9;
+  spawnBits(_v1, g.kind === "medkit" ? 0x3dff7a : 0x4ad4ff, 3);
   updateGearHud();
   return true;
 }
@@ -1796,19 +2217,19 @@ function startUseItem(kind) {
 function applyUseItem() {
   if (state.useApplied || !state.using) return;
   state.useApplied = true;
-  const origin = player.position.clone();
-  origin.y = EYE * 0.7;
+  _v1.copy(player.position);
+  _v1.y = EYE * 0.7;
   if (state.using === "medkit") {
     state.medkits = Math.max(0, state.medkits - 1);
     state.hp = Math.min(100, state.hp + 55);
     sfx.kitUse();
-    spawnBits(origin, 0x3dff7a, 16);
+    spawnBits(_v1, 0x3dff7a, 4);
     showBanner("INTEGRIDADE +55");
   } else {
     state.shieldPacks = Math.max(0, state.shieldPacks - 1);
     state.shield = Math.min(80, state.shield + 70);
     sfx.shieldUse();
-    spawnBits(origin, 0x4ad4ff, 16);
+    spawnBits(_v1, 0x4ad4ff, 4);
     showBanner("ESCUDO ATIVO");
   }
   state.iframe = Math.max(state.iframe, 0.45);
@@ -1839,7 +2260,7 @@ function spawnCore(x, z, first = false, locked = false) {
   );
   const beam = mesh(
     new THREE.CylinderGeometry(0.05, 0.14, 4.4, 8, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0x7fffe8, transparent: true, opacity: first ? 0.34 : 0.22, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({ color: 0x7fffe8, transparent: true, opacity: first ? 0.42 : 0.28, side: THREE.DoubleSide })
   );
   beam.position.y = 2.1;
   beam.castShadow = false;
@@ -1847,7 +2268,7 @@ function spawnCore(x, z, first = false, locked = false) {
   ring.rotation.x = Math.PI / 2;
   ring.position.y = -0.72;
   ring.castShadow = false;
-  group.add(cell, beam, ring, new THREE.PointLight(0x66ffe0, first ? 4.5 : 2.8, first ? 14 : 10));
+  group.add(cell, beam, ring);
   world.add(group);
   cores.push({ mesh: group, taken: false, baseY: 1.08, locked, cage: locked ? addCage(x, z) : null });
 }
@@ -1991,28 +2412,59 @@ function showAlert(text) {
   showAlert.t = setTimeout(() => alertEl.classList.add("hidden"), 4500);
 }
 
+function retireAliveEnemies() {
+  spawnQ.length = 0;
+  for (const e of enemies) {
+    e.alive = false;
+    e.spawning = false;
+    e.carriesCell = false;
+    if (e.mesh) e.mesh.visible = false;
+    const d = e.deployment;
+    if (!d) continue;
+    if (d.rig) d.rig.visible = false;
+    if (d.cableL) d.cableL.visible = false;
+    if (d.cableR) d.cableR.visible = false;
+  }
+  for (const s of enemyShots) recycle(s.mesh, shotPool);
+  enemyShots.length = 0;
+}
+
 function spawnReinforcements() {
+  let alive = 0;
+  for (const e of enemies) if (e.alive) alive += 1;
+  const room = 7 - alive;
+  if (room <= 0) return;
+  const kind = state.phase >= 3 ? "chaser" : "drone";
+  const want = Math.min(state.phase >= 3 ? 1 : 2, room);
+  const offsets = [
+    [5.2, 2.1],
+    [-5.2, 2.1],
+    [3.4, -4.8],
+    [-3.4, -4.8],
+  ];
+  let queued = 0;
   const px = player.position.x;
   const pz = player.position.z;
-  const kind = state.phase >= 3 ? "chaser" : "drone";
-  const offsets = [
-    [7.5, 2.2],
-    [-6.8, 4.4],
-    [3.2, -7.2],
-    [-5.4, -6.2],
-  ];
-  const n = Math.min(2 + state.phase, offsets.length);
-  let spawned = 0;
   for (const [ox, oz] of offsets) {
-    if (spawned >= n) break;
+    if (queued >= want) break;
     const x = px + ox;
     const z = pz + oz;
-    if (!spawnEnemyNear(kind, x, z)) continue;
-    spawned += 1;
+    if (wingOf(x, z) !== wingOf(px, pz)) continue;
+    if (!inPlayable(x, z)) continue;
+    spawnQ.push({ kind, x, z });
+    queued += 1;
   }
-  if (spawned < 2) {
-    if (spawnEnemyNear("drone", px + 8, pz)) spawned += 1;
-    if (spawned < 2) spawnEnemyNear(kind, px - 8, pz);
+}
+
+function tickSpawnQ() {
+  if (!spawnQ.length || !state.running || state.paused) return;
+  for (let n = 0; n < 4 && spawnQ.length; n++) {
+    const job = spawnQ.shift();
+    if (job.kind === "core") {
+      spawnCore(job.x, job.z);
+      return;
+    }
+    if (spawnEnemyNear(job.kind, job.x, job.z)) return;
   }
 }
 
@@ -2059,55 +2511,77 @@ function spawnGenerator(x, z) {
   g.add(new THREE.PointLight(0xff6a22, 2.4, 8));
   world.add(g);
   const col = {
-    min: new THREE.Vector3(x - 0.85, 0, z - 0.85),
-    max: new THREE.Vector3(x + 0.85, 1.8, z + 0.85),
+    min: new THREE.Vector3(x - 1.1, 0, z - 1.1),
+    max: new THREE.Vector3(x + 1.1, 2.25, z + 1.1),
+    noShot: true,
   };
   colliders.push(col);
-  props.push({ kind: "gen", mesh: g, col, hp: 10, hpMax: 10, alive: true, core });
+  props.push({ kind: "gen", mesh: g, col, hp: 8, hpMax: 8, alive: true, core });
 }
 
+const deployGeo = {
+  panel: new THREE.BoxGeometry(0.68, 0.08, 1.35),
+  frameZ: new THREE.BoxGeometry(1.75, 0.11, 0.14),
+  frameX: new THREE.BoxGeometry(0.14, 0.11, 1.5),
+  warn: new THREE.BoxGeometry(0.16, 0.04, 0.08),
+  cable: new THREE.CylinderGeometry(0.014, 0.014, 1, 8),
+};
+let deployHatchMat;
+let deployFrameMat;
+let deployWarnMat;
+let deployCableMat;
+
 function createDeploymentRig(x, z) {
+  if (!deployHatchMat) {
+    deployHatchMat = metal(0x141b22, { roughness: 0.3, metalness: 0.9 });
+    deployFrameMat = metal(0x303943, { roughness: 0.28, metalness: 0.92 });
+    deployWarnMat = emit(0xff6a22, 2.2);
+    deployCableMat = metal(0x080a0d, { roughness: 0.4, metalness: 0.95 });
+  }
   const rig = new THREE.Group();
   rig.position.set(x, 4.72, z);
-  const hatchMat = metal(0x141b22, { roughness: 0.3, metalness: 0.9 });
-  const panelL = mesh(new THREE.BoxGeometry(0.68, 0.08, 1.35), hatchMat, -0.35, 0, 0);
-  const panelR = mesh(new THREE.BoxGeometry(0.68, 0.08, 1.35), hatchMat, 0.35, 0, 0);
-  const frameMat = metal(0x303943, { roughness: 0.28, metalness: 0.92 });
+  const panelL = mesh(deployGeo.panel, deployHatchMat, -0.35, 0, 0);
+  const panelR = mesh(deployGeo.panel, deployHatchMat, 0.35, 0, 0);
   rig.add(
     panelL,
     panelR,
-    mesh(new THREE.BoxGeometry(1.75, 0.11, 0.14), frameMat, 0, 0.02, -0.75),
-    mesh(new THREE.BoxGeometry(1.75, 0.11, 0.14), frameMat, 0, 0.02, 0.75),
-    mesh(new THREE.BoxGeometry(0.14, 0.11, 1.5), frameMat, -0.82, 0.02, 0),
-    mesh(new THREE.BoxGeometry(0.14, 0.11, 1.5), frameMat, 0.82, 0.02, 0)
+    mesh(deployGeo.frameZ, deployFrameMat, 0, 0.02, -0.75),
+    mesh(deployGeo.frameZ, deployFrameMat, 0, 0.02, 0.75),
+    mesh(deployGeo.frameX, deployFrameMat, -0.82, 0.02, 0),
+    mesh(deployGeo.frameX, deployFrameMat, 0.82, 0.02, 0)
   );
-  const warningMat = emit(0xff6a22, 2.2);
-  const warningL = mesh(new THREE.BoxGeometry(0.16, 0.04, 0.08), warningMat, -0.55, -0.08, -0.68);
-  const warningR = mesh(new THREE.BoxGeometry(0.16, 0.04, 0.08), warningMat, 0.55, -0.08, -0.68);
+  const warningL = mesh(deployGeo.warn, deployWarnMat, -0.55, -0.08, -0.68);
+  const warningR = mesh(deployGeo.warn, deployWarnMat, 0.55, -0.08, -0.68);
   rig.add(warningL, warningR);
   world.add(rig);
 
-  const cableMat = metal(0x080a0d, { roughness: 0.4, metalness: 0.95 });
-  const cableL = mesh(new THREE.CylinderGeometry(0.014, 0.014, 1, 8), cableMat, x - 0.24, 4.65, z);
-  const cableR = mesh(new THREE.CylinderGeometry(0.014, 0.014, 1, 8), cableMat, x + 0.24, 4.65, z);
+  const cableL = mesh(deployGeo.cable, deployCableMat, x - 0.24, 4.65, z);
+  const cableR = mesh(deployGeo.cable, deployCableMat, x + 0.24, 4.65, z);
   cableL.visible = cableR.visible = false;
   world.add(cableL, cableR);
-  return { rig, panelL, panelR, warningMat, cableL, cableR };
+  return { rig, panelL, panelR, warningMat: deployWarnMat, cableL, cableR };
+}
+
+function stripLights(root) {
+  const drop = [];
+  root.traverse((o) => {
+    if (o.isLight) drop.push(o);
+  });
+  for (const L of drop) L.parent?.remove(L);
 }
 
 function pushEnemy(root, kind, x, z, extra) {
   const glb = cloneAsset(`enemy_${kind}`, 1, false);
   if (glb) {
     const drop = [];
-    for (const c of root.children) {
-      if (!c.isLight) drop.push(c);
-    }
+    for (const c of root.children) drop.push(c);
     for (const c of drop) root.remove(c);
     root.add(glb);
-    extra.ring = new THREE.Object3D();
-    extra.ring2 = new THREE.Object3D();
+    extra.ring = extra.ring || new THREE.Object3D();
+    extra.ring2 = extra.ring2 || new THREE.Object3D();
     extra.thrusters = [];
   }
+  stripLights(root);
   const deployment = createDeploymentRig(x, z);
   root.position.y = 5.45;
   root.scale.setScalar(1);
@@ -2161,7 +2635,7 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
     const barrel = mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.7, 8), dark, 0, 0.95, 0.45);
     barrel.rotation.x = Math.PI / 2;
     visor.castShadow = false;
-    root.add(head, visor, barrel, new THREE.PointLight(0xff3a28, 1.1, 5));
+    root.add(head, visor, barrel);
     pushEnemy(root, kind, x, z, {
       ring: dummy,
       ring2: dummy,
@@ -2173,10 +2647,10 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
       speed: 0,
       chaseSpeed: 0,
       range: 16,
-      shotDmg: 16,
+      shotDmg: 12,
       shotSpeed: 22,
       shotLife: 1.1,
-      fireCd: 0.72,
+      fireCd: 0.9,
       windupTime: 0.28,
       melee: 0,
       meleeDmg: 0,
@@ -2198,7 +2672,7 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
     const glow = mesh(new THREE.SphereGeometry(0.08, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff7a22 }), 0, -0.22, 0);
     glow.castShadow = false;
     thrusters.push(glow);
-    root.add(glow, new THREE.PointLight(0xff7a22, 1.2, 4.5));
+    root.add(glow);
     pushEnemy(root, kind, x, z, {
       ring: dummy,
       ring2: dummy,
@@ -2208,15 +2682,15 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
       radius: 0.42,
       hoverY: 0.7,
       speed: 2.4,
-      chaseSpeed: 6.4,
-      range: 13,
+      chaseSpeed: 5.1,
+      range: 12,
       shotDmg: 0,
       shotSpeed: 0,
       shotLife: 0,
-      fireCd: 0.55,
+      fireCd: 0.82,
       windupTime: 0,
-      melee: 1.35,
-      meleeDmg: 22,
+      melee: 1.3,
+      meleeDmg: 12,
       boltColor: 0xff7a22,
       boltSize: 0.08,
     });
@@ -2233,7 +2707,7 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
     b1.rotation.x = b2.rotation.x = Math.PI / 2;
     const ring = mesh(new THREE.TorusGeometry(0.85, 0.04, 6, 16), metal(0x3a2020), 0, 0.05, 0);
     ring.rotation.x = Math.PI / 2;
-    root.add(b1, b2, ring, new THREE.PointLight(0xff2a20, 1.6, 7));
+    root.add(b1, b2, ring);
     pushEnemy(root, kind, x, z, {
       ring,
       ring2: dummy,
@@ -2291,7 +2765,6 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
     root.add(glow);
     thrusters.push(glow);
   }
-  root.add(new THREE.PointLight(0xff3a28, 1.25, 6));
   pushEnemy(root, kind, x, z, {
     ring,
     ring2,
@@ -2303,13 +2776,13 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
     speed: 1.5,
     chaseSpeed: 3.2,
     range: 11,
-    shotDmg: 15,
+    shotDmg: 11,
     shotSpeed: 18,
     shotLife: 1.05,
-    fireCd: 0.95,
+    fireCd: 1.05,
     windupTime: 0.32,
     melee: 1.45,
-    meleeDmg: 10,
+    meleeDmg: 8,
     boltColor: 0xff4a32,
     boltSize: 0.08,
   });
@@ -2327,6 +2800,7 @@ function clearWorld() {
   colliders.length = 0;
   gates.length = 0;
   mapLights.length = 0;
+  spawnQ.length = 0;
   for (const s of shots) {
     recycle(s.mesh, boltPool);
     shotRecPool.push(s);
@@ -2351,12 +2825,13 @@ function pointBlocked(x, y, z) {
   return false;
 }
 
-function segmentBlocked(ax, ay, az, bx, by, bz) {
+function segmentBlocked(ax, ay, az, bx, by, bz, forShot = false) {
   const dx = bx - ax;
   const dy = by - ay;
   const dz = bz - az;
   for (let n = 0; n < colliders.length; n++) {
     const c = colliders[n];
+    if (forShot && c.noShot) continue;
     let tmin = 0;
     let tmax = 1;
     if (Math.abs(dx) < 1e-8) {
@@ -2426,14 +2901,37 @@ function canSee(from) {
   );
 }
 
+function wingOf(x, z) {
+  if (x > 13.6) return "east";
+  if (x < -13.6) return "west";
+  if (z > 13.6) return "south";
+  if (z < -13.6) return "north";
+  return "hub";
+}
+
+function inPlayable(x, z) {
+  const ax = Math.abs(x);
+  const az = Math.abs(z);
+  if (ax < 13.15 && az < 13.15) return true;
+  if (x > 13.55 && x < 32.35 && az < 10.35) return true;
+  if (x < -13.55 && x > -32.35 && az < 10.35) return true;
+  if (z > 13.55 && z < 31.05 && ax < 10.35) return true;
+  if (z < -13.55 && z > -31.05 && ax < 10.35) return true;
+  if (z > 14.6 && z < 21.1 && ax < 3.35) return true;
+  return false;
+}
+
 function findOpenSpot(x, z) {
   const y = 1.15;
-  for (const r of [0, 1.4, 2.6, 4, 5.5]) {
+  const wing = wingOf(x, z);
+  for (const r of [0, 1.4, 2.6, 4]) {
     const n = r === 0 ? 1 : 10;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + r;
       const px = x + Math.cos(a) * r;
       const pz = z + Math.sin(a) * r;
+      if (wingOf(px, pz) !== wing) continue;
+      if (!inPlayable(px, pz)) continue;
       if (pointBlocked(px, y, pz)) continue;
       if (pointBlocked(px + 0.5, y, pz) || pointBlocked(px - 0.5, y, pz)) continue;
       if (pointBlocked(px, y, pz + 0.5) || pointBlocked(px, y, pz - 0.5)) continue;
@@ -2605,8 +3103,9 @@ function movePlayer(dt) {
 }
 
 function spawnBits(pos, color, n = 10) {
+  if (bits.length >= 18) return;
   const mat = bitMaterial(color);
-  const count = Math.min(n, 8);
+  const count = Math.min(n, 4, 18 - bits.length);
   for (let i = 0; i < count; i++) {
     const m = takeMesh(bitPool, () => {
       const b = new THREE.Mesh(bitGeo, mat);
@@ -2616,7 +3115,6 @@ function spawnBits(pos, color, n = 10) {
     });
     m.material = mat;
     m.position.copy(pos);
-    scene.add(m);
     const rec = bitRecPool.pop() || { mesh: null, vel: new THREE.Vector3(), life: 0 };
     rec.mesh = m;
     rec.vel.set((Math.random() - 0.5) * 6, Math.random() * 4.5, (Math.random() - 0.5) * 6);
@@ -2637,7 +3135,7 @@ function shoot() {
   const oc = state.overclock > 0;
   state.shootCd = oc ? w.cd * 0.6 : w.cd;
   state.ammo -= 1;
-  updateWeaponHud();
+  tickAmmoHud();
   if (state.ammo <= 0) startReload();
   if (!oc) {
     state.heat = Math.min(100, state.heat + w.heat);
@@ -2647,7 +3145,7 @@ function shoot() {
     }
   }
   sfx.shoot(state.weapon);
-  muzzle.intensity = oc ? 10 : 8;
+  muzzle.intensity = oc ? 4.5 : 3.2;
   const aimControl = THREE.MathUtils.lerp(1, 0.55, state.aim);
   state.shotKick = (state.weapon === "escopeta" ? 1.35 : state.weapon === "rifle" ? 0.72 : 0.9) * aimControl;
   state.shotFlash = state.weapon === "escopeta" ? 0.095 : 0.06;
@@ -2661,13 +3159,15 @@ function shoot() {
   camera.getWorldDirection(_v2);
   _v1.addScaledVector(_v2, 0.55);
   for (let i = 0; i < w.pellets; i++) {
-    const d = new THREE.Vector3().copy(_v2);
+    const rec = shotRecPool.pop() || { dir: new THREE.Vector3() };
+    if (!rec.dir) rec.dir = new THREE.Vector3();
+    rec.dir.copy(_v2);
     if (w.spread) {
       const spread = w.spread * THREE.MathUtils.lerp(1, 0.32, state.aim);
-      d.x += (Math.random() - 0.5) * spread * 2;
-      d.y += (Math.random() - 0.5) * spread * 2;
-      d.z += (Math.random() - 0.5) * spread * 2;
-      d.normalize();
+      rec.dir.x += (Math.random() - 0.5) * spread * 2;
+      rec.dir.y += (Math.random() - 0.5) * spread * 2;
+      rec.dir.z += (Math.random() - 0.5) * spread * 2;
+      rec.dir.normalize();
     }
     const bolt = takeMesh(boltPool, () => {
       const b = new THREE.Mesh(boltGeo, boltMat);
@@ -2675,12 +3175,9 @@ function shoot() {
       b.receiveShadow = false;
       return b;
     });
-    bolt.quaternion.setFromUnitVectors(_upY, d);
+    bolt.quaternion.setFromUnitVectors(_upY, rec.dir);
     bolt.position.copy(_v1);
-    scene.add(bolt);
-    const rec = shotRecPool.pop() || {};
     rec.mesh = bolt;
-    rec.dir = d;
     rec.life = w.range / w.speed + 0.08;
     rec.dmg = w.dmg;
     rec.speed = w.speed;
@@ -2707,10 +3204,10 @@ function enemyShoot(e) {
   const s = e.boltSize || 0.08;
   bolt.scale.set(s, s, s);
   bolt.position.copy(_v1).addScaledVector(_v2, 0.28);
-  scene.add(bolt);
-  const rec = shotRecPool.pop() || {};
+  const rec = shotRecPool.pop() || { dir: new THREE.Vector3() };
+  if (!rec.dir) rec.dir = new THREE.Vector3();
   rec.mesh = bolt;
-  rec.dir = _v2.clone();
+  rec.dir.copy(_v2);
   rec.life = e.shotLife;
   rec.speed = e.shotSpeed;
   rec.dmg = e.shotDmg;
@@ -2732,7 +3229,7 @@ function stepBolt(s, speed, dt, onMove) {
       s.traveled += part;
       if (s.traveled > s.range) return "range";
     }
-    if (segmentBlocked(ax, ay, az, s.mesh.position.x, s.mesh.position.y, s.mesh.position.z)) return "wall";
+    if (segmentBlocked(ax, ay, az, s.mesh.position.x, s.mesh.position.y, s.mesh.position.z, true)) return "wall";
     const r = onMove();
     if (r) return r;
   }
@@ -2759,14 +3256,13 @@ function updateShots(dt) {
       const sy = s.mesh.position.y;
       const sz = s.mesh.position.z;
       for (const p of props) {
-        if (!p.alive) continue;
-        const dx = sx - p.mesh.position.x;
-        const dy = sy - 1.15;
-        const dz = sz - p.mesh.position.z;
-        if (dx * dx + dy * dy + dz * dz < 0.81) {
-          hitGenerator(p, damageNow);
-          return "hit";
-        }
+        if (!p.alive || !p.col) continue;
+        const c = p.col;
+        if (sx < c.min.x - 0.35 || sx > c.max.x + 0.35) continue;
+        if (sz < c.min.z - 0.35 || sz > c.max.z + 0.35) continue;
+        if (sy < 0.2 || sy > c.max.y + 0.5) continue;
+        hitGenerator(p, damageNow);
+        return "hit";
       }
       for (const e of enemies) {
         if (!e.alive || e.spawning) continue;
@@ -2778,7 +3274,7 @@ function updateShots(dt) {
       }
       return null;
     });
-    if (res === "wall") spawnBits(s.mesh.position, 0x9fd8d0, 4);
+    if (res === "wall") spawnBits(s.mesh.position, 0x9fd8d0, 2);
     if (res || s.life <= 0) {
       recycle(s.mesh, boltPool);
       shots.splice(i, 1);
@@ -2835,8 +3331,7 @@ function hitZoneMultiplier(e, point) {
 
 function hitEnemy(e, point, dmg = 1) {
   if (!isWeakPoint(e, point)) {
-    sfx.armor(point);
-    spawnBits(point, 0xffc078, 5);
+    sfx.armor();
     e.mesh.scale.setScalar(1.06);
     showHit(false, true);
     return;
@@ -2844,20 +3339,19 @@ function hitEnemy(e, point, dmg = 1) {
   const zoneMultiplier = hitZoneMultiplier(e, point);
   const finalDamage = dmg * zoneMultiplier;
   e.hp -= finalDamage;
-  sfx.droneHit(point);
-  spawnBits(point, zoneMultiplier >= 1.4 ? 0xffe45a : zoneMultiplier < 1 ? 0xff8a62 : 0xff6a48, 8);
+  sfx.droneHit();
   e.mesh.scale.setScalar(1.12);
   const dead = e.hp <= 0;
   showHit(dead, false, zoneMultiplier >= 1.4);
   if (dead) {
     e.alive = false;
-    spawnBits(e.mesh.position, 0xff4028, 16);
+    e.mesh.visible = false;
+    spawnBits(e.mesh.position, 0xff4028, 4);
     if (e.carriesCell) {
       e.carriesCell = false;
-      spawnCore(e.mesh.position.x, e.mesh.position.z);
+      spawnQ.push({ kind: "core", x: e.mesh.position.x, z: e.mesh.position.z });
       showBanner("CÉLULA RECUPERADA");
     }
-    world.remove(e.mesh);
     sfx.droneDie();
   }
 }
@@ -2865,14 +3359,16 @@ function hitEnemy(e, point, dmg = 1) {
 function hitGenerator(p, dmg = 1) {
   p.hp -= dmg;
   sfx.droneHit(p.mesh.position);
-  spawnBits(p.mesh.position.clone().setY(1.15), 0xff8a3a, 8);
+  _v1.copy(p.mesh.position);
+  _v1.y = 1.15;
+  spawnBits(_v1, 0xff8a3a, 4);
   showHit(p.hp <= 0);
   if (p.hp > 0) return;
   p.alive = false;
-  world.remove(p.mesh);
+  retirePickup(p.mesh);
   const i = colliders.indexOf(p.col);
   if (i >= 0) colliders.splice(i, 1);
-  spawnBits(p.mesh.position, 0xff6a22, 22);
+  spawnBits(p.mesh.position, 0xff6a22, 6);
   sfx.phase();
   showBanner("JAULAS LIBERADAS");
   for (const c of cores) {
@@ -2887,8 +3383,8 @@ function hitGenerator(p, dmg = 1) {
   for (const e of enemies) {
     if (!e.alive || e.spawning || e.kind !== "turret") continue;
     e.alive = false;
-    spawnBits(e.mesh.position, 0xff4028, 12);
-    world.remove(e.mesh);
+    e.mesh.visible = false;
+    spawnBits(e.mesh.position, 0xff4028, 4);
   }
 }
 
@@ -2963,11 +3459,11 @@ function updateCores(t, dt) {
         continue;
       }
       c.taken = true;
-      world.remove(c.mesh);
+      retirePickup(c.mesh);
       state.carrying = true;
       state.carryingFrom = c;
       sfx.pickup();
-      spawnBits(c.mesh.position, 0x7fffe8, 14);
+      spawnBits(c.mesh.position, 0x7fffe8, 3);
       updateInv();
       showAlert("Célula encontrada. Perigo: robôs ativados.");
       spawnReinforcements();
@@ -3004,19 +3500,19 @@ function updateCores(t, dt) {
     const pending = reactors.some((r) => r.inserts.some((ins) => !ins.done));
     if (!pending) finish(true);
   }
-  coreCount.textContent = `${state.phaseGot} / ${state.phaseNeed}`;
-  if (blockedByFull) {
-    nearPrompt.textContent = "Mochila ocupada. Entregue a célula no reator primeiro.";
-  } else if (state.carrying) {
-    nearPrompt.textContent = "Encaixe a célula na caixa do reator.";
-  } else if (cores.some((c) => !c.taken && c.locked)) {
-    nearPrompt.textContent = "Célula em jaula. Destrua o gerador laranja.";
-  } else if (enemies.some((e) => e.alive && !e.spawning && e.carriesCell)) {
-    nearPrompt.textContent = "Derrote o robô portador para obter a célula.";
-  } else {
-    nearPrompt.textContent = "Aproxime-se para recolher a célula.";
+  setText(coreCount, `${state.phaseGot} / ${state.phaseNeed}`);
+  let prompt;
+  if (blockedByFull) prompt = "Mochila ocupada. Entregue a célula no reator primeiro.";
+  else if (state.carrying) prompt = "Encaixe a célula na caixa do reator.";
+  else if (cores.some((c) => !c.taken && c.locked)) prompt = "Célula em jaula. Destrua o gerador laranja.";
+  else if (enemies.some((e) => e.alive && !e.spawning && e.carriesCell)) prompt = "Derrote o robô portador para obter a célula.";
+  else prompt = "Aproxime-se para recolher a célula.";
+  setText(nearPrompt, prompt);
+  const showNear = close && state.running && !state.paused;
+  if (nearPrompt._hide !== !showNear) {
+    nearPrompt._hide = !showNear;
+    nearPrompt.classList.toggle("hidden", !showNear);
   }
-  nearPrompt.classList.toggle("hidden", !close || !state.running || state.paused);
 }
 
 function updateEnemyDeployment(e, t, dt) {
@@ -3054,7 +3550,8 @@ function updateEnemyDeployment(e, t, dt) {
     e.mesh.scale.setScalar(1);
     e.spawning = false;
     world.remove(d.rig, d.cableL, d.cableR);
-    spawnBits(new THREE.Vector3(e.mesh.position.x, Math.max(0.25, e.spawnTargetY), e.mesh.position.z), 0xff8a32, 12);
+    _v1.set(e.mesh.position.x, Math.max(0.25, e.spawnTargetY), e.mesh.position.z);
+    spawnBits(_v1, 0xff8a32, 4);
     sfx.drop();
   }
   return true;
@@ -3064,8 +3561,10 @@ function updateEnemies(t, dt) {
   const p = player.position;
   state.grace = Math.max(0, state.grace - dt);
   let nearest = 99;
+  let aliveE = 0;
   for (const e of enemies) {
     if (!e.alive) continue;
+    if (!e.spawning) aliveE += 1;
     if (e.spawning) {
       updateEnemyDeployment(e, t, dt);
       continue;
@@ -3075,12 +3574,7 @@ function updateEnemies(t, dt) {
 
     const dist = Math.hypot(p.x - e.mesh.position.x, p.z - e.mesh.position.z);
     nearest = Math.min(nearest, dist);
-    if (dist > 38 && !e.carriesCell) {
-      if (e.mesh.visible) e.mesh.visible = false;
-      continue;
-    }
-    if (!e.mesh.visible) e.mesh.visible = true;
-    if (dist > 26) {
+    if (dist > 28) {
       e.attackCd = Math.max(0, e.attackCd - dt);
       continue;
     }
@@ -3112,24 +3606,28 @@ function updateEnemies(t, dt) {
         const x0 = e.mesh.position.x;
         const z0 = e.mesh.position.z;
         const y = 1.1;
-        if (!segmentBlocked(x0, y, z0, x0 + mx, y, z0 + mz)) {
+        if (!segmentBlocked(x0, y, z0, x0 + mx, y, z0 + mz) && inPlayable(x0 + mx, z0 + mz)) {
           e.mesh.position.x = x0 + mx;
           e.mesh.position.z = z0 + mz;
-        } else if (!segmentBlocked(x0, y, z0, x0 + mx, y, z0)) {
+        } else if (!segmentBlocked(x0, y, z0, x0 + mx, y, z0) && inPlayable(x0 + mx, z0)) {
           e.mesh.position.x = x0 + mx;
-        } else if (!segmentBlocked(x0, y, z0, x0, y, z0 + mz)) {
+        } else if (!segmentBlocked(x0, y, z0, x0, y, z0 + mz) && inPlayable(x0, z0 + mz)) {
           e.mesh.position.z = z0 + mz;
         } else {
           const side = Math.sin(e.phase) > 0 ? 1 : -1;
           const sx = -mz * side;
           const sz = mx * side;
-          if (!segmentBlocked(x0, y, z0, x0 + sx, y, z0 + sz)) {
+          if (!segmentBlocked(x0, y, z0, x0 + sx, y, z0 + sz) && inPlayable(x0 + sx, z0 + sz)) {
             e.mesh.position.x = x0 + sx;
             e.mesh.position.z = z0 + sz;
           }
         }
       }
       resolveRadius(e.mesh.position, e.radius, 0.6);
+      if (!inPlayable(e.mesh.position.x, e.mesh.position.z)) {
+        e.mesh.position.x = e.home.x;
+        e.mesh.position.z = e.home.z;
+      }
       if (e.kind !== "turret") e.mesh.position.y = e.hoverY + Math.sin(t * 2.2 + e.phase) * (e.kind === "chaser" ? 0.08 : 0.1);
     }
 
@@ -3173,17 +3671,18 @@ function updateEnemies(t, dt) {
     }
   }
   sfx.hum(nearest);
+  state.aliveEnemies = aliveE;
 
   // separação inimigo-inimigo (não entram um dentro do outro)
   for (let i = 0; i < enemies.length; i++) {
     const a = enemies[i];
-    if (!a.alive || a.spawning || a.kind === "turret" || !a.mesh.visible) continue;
+    if (!a.alive || a.spawning || a.kind === "turret") continue;
     const adx = a.mesh.position.x - p.x;
     const adz = a.mesh.position.z - p.z;
     if (adx * adx + adz * adz > 484) continue;
     for (let j = i + 1; j < enemies.length; j++) {
       const b = enemies[j];
-      if (!b.alive || b.spawning || b.kind === "turret" || !b.mesh.visible) continue;
+      if (!b.alive || b.spawning || b.kind === "turret") continue;
       const dx = b.mesh.position.x - a.mesh.position.x;
       const dz = b.mesh.position.z - a.mesh.position.z;
       const minD = a.radius + b.radius + 0.25;
@@ -3276,7 +3775,7 @@ function updateMarker() {
   markerEl.classList.remove("hidden");
   markerEl.style.transform = `translate(${x}px, ${y}px)`;
   const meters = Math.round(c.mesh.position.distanceTo(player.position));
-  markerDist.textContent =
+  const label =
     c.kind === "gen"
       ? `gerador ${meters}m`
       : c.kind === "reactor"
@@ -3290,85 +3789,83 @@ function updateMarker() {
               : c.kind === "shield"
                 ? `escudo ${meters}m`
                 : `${meters}m`;
+  setText(markerDist, label);
   if (meters > 3) {
     guide.visible = true;
     _guideA.set(player.position.x, 0.07, player.position.z);
     _guideB.set(c.mesh.position.x, 0.07, c.mesh.position.z);
-    guide.geometry.setFromPoints([_guideA, _guideB]);
+    setGuideLine(_guideA.x, _guideA.z, _guideB.x, _guideB.z);
   } else guide.visible = false;
 }
 
+function setText(el, v) {
+  if (!el || el._txt === v) return;
+  el._txt = v;
+  el.textContent = v;
+}
+
+function setGuideLine(ax, az, bx, bz) {
+  const attr = guide.geometry.getAttribute("position");
+  if (!attr) return;
+  const a = attr.array;
+  if (a[0] === ax && a[2] === az && a[3] === bx && a[5] === bz) return;
+  a[0] = ax;
+  a[1] = 0.07;
+  a[2] = az;
+  a[3] = bx;
+  a[4] = 0.07;
+  a[5] = bz;
+  attr.needsUpdate = true;
+}
+
+function updateLockBanner() {
+  const hide = !!document.pointerLockElement || state.paused || !state.running;
+  if (lockBanner._hide === hide) return;
+  lockBanner._hide = hide;
+  lockBanner.classList.toggle("hidden", hide);
+}
+
 function updateHudPhase() {
-  phaseKicker.textContent = `FASE ${state.phase} / 4 — ${PHASE_NAMES[state.phase]}`;
-  coreCount.textContent = `${state.phaseGot} / ${state.phaseNeed}`;
+  setText(phaseKicker, `FASE ${state.phase} / 4 — ${PHASE_NAMES[state.phase]}`);
+  setText(coreCount, `${state.phaseGot} / ${state.phaseNeed}`);
 }
 
 function updateMission() {
+  let msg;
   if (state.door && !state.door.open) {
-    missionText.textContent = state.door.opening
+    msg = state.door.opening
       ? "PORTA DE CONTENÇÃO ABRINDO..."
       : "Aproxime-se e clique na porta para iniciar a missão.";
-    return;
+  } else if (!state.moved) {
+    msg = "Avance com WASD até o robô portador à frente.";
+  } else if (state.carrying) {
+    msg = "Leve a célula até o reator-bateria. A linha no piso indica o caminho.";
+  } else if (state.ammo <= 0 && state.reserve <= 0 && !state.reloading) {
+    msg = "Sem munição. Siga o marcador até uma arma laranja.";
+  } else if (state.using) {
+    msg = state.using === "medkit" ? "Aplicando kit médico..." : "Ativando escudo de energia...";
+  } else if (state.reloading) {
+    msg = "Recarregando...";
+  } else if (state.hp < 45 && state.medkits <= 0 && nearestGear("medkit")) {
+    msg = "Vida baixa. Siga o marcador até um kit médico verde.";
+  } else if (state.hp < 40 && state.shield <= 0 && state.shieldPacks <= 0 && nearestGear("shield")) {
+    msg = "Pegue um escudo azul no flanco para absorver o próximo hit.";
+  } else if (state.medkits > 0 && state.hp < 55) {
+    msg = "Vida baixa. Pressione 4 para usar o kit médico.";
+  } else if (state.shieldPacks > 0 && state.shield <= 0 && state.hp < 70) {
+    msg = "Pressione 5 para ativar o escudo antes do próximo combate.";
+  } else if (props.some((p) => p.alive && p.kind === "gen")) {
+    msg = "Destrua o gerador laranja, no flanco norte da ala leste.";
+  } else if (state.phase === 4 && enemies.some((e) => e.alive && !e.spawning && e.kind === "heavy")) {
+    msg = "Mire no visor vermelho da unidade pesada. O casco é blindado.";
+  } else if (enemies.some((e) => e.alive && !e.spawning && e.carriesCell)) {
+    msg = "Derrote o robô portador. A célula será liberada ao destruí-lo.";
+  } else if (state.overclock > 0) {
+    msg = `Overclock ${Math.ceil(state.overclock)}s — cadência elevada. A arma não superaquece.`;
+  } else {
+    msg = PHASE_INFO[state.phase];
   }
-  if (!state.moved) {
-    missionText.textContent = "Avance com WASD até o robô portador à frente.";
-    return;
-  }
-  if (state.carrying) {
-    missionText.textContent = "Leve a célula até o reator-bateria. A linha no piso indica o caminho.";
-    return;
-  }
-  if (state.ammo <= 0 && state.reserve <= 0 && !state.reloading) {
-    missionText.textContent = "Sem munição. Siga o marcador até uma arma laranja.";
-    return;
-  }
-  if (state.using) {
-    missionText.textContent = state.using === "medkit" ? "Aplicando kit médico..." : "Ativando escudo de energia...";
-    return;
-  }
-  if (state.reloading) {
-    missionText.textContent = "Recarregando...";
-    return;
-  }
-  if (state.hp < 45 && state.medkits <= 0) {
-    const kit = nearestGear("medkit");
-    if (kit) {
-      missionText.textContent = "Vida baixa. Siga o marcador até um kit médico verde.";
-      return;
-    }
-  }
-  if (state.hp < 40 && state.shield <= 0 && state.shieldPacks <= 0) {
-    const sh = nearestGear("shield");
-    if (sh) {
-      missionText.textContent = "Pegue um escudo azul no flanco para absorver o próximo hit.";
-      return;
-    }
-  }
-  if (state.medkits > 0 && state.hp < 55) {
-    missionText.textContent = "Vida baixa. Pressione 4 para usar o kit médico.";
-    return;
-  }
-  if (state.shieldPacks > 0 && state.shield <= 0 && state.hp < 70) {
-    missionText.textContent = "Pressione 5 para ativar o escudo antes do próximo combate.";
-    return;
-  }
-  if (props.some((p) => p.alive && p.kind === "gen")) {
-    missionText.textContent = "Destrua o gerador laranja, no flanco norte da ala leste.";
-    return;
-  }
-  if (state.phase === 4 && enemies.some((e) => e.alive && !e.spawning && e.kind === "heavy")) {
-    missionText.textContent = "Mire no visor vermelho da unidade pesada. O casco é blindado.";
-    return;
-  }
-  if (enemies.some((e) => e.alive && !e.spawning && e.carriesCell)) {
-    missionText.textContent = "Derrote o robô portador. A célula será liberada ao destruí-lo.";
-    return;
-  }
-  if (state.overclock > 0) {
-    missionText.textContent = `Overclock ${Math.ceil(state.overclock)}s — cadência elevada. A arma não superaquece.`;
-    return;
-  }
-  missionText.textContent = PHASE_INFO[state.phase];
+  setText(missionText, msg);
 }
 
 function showBanner(text) {
@@ -3382,16 +3879,22 @@ function updateHpBars() {
   const pz = player.position.z;
   const items = [];
   for (const e of enemies) {
-    if (!e.alive || e.spawning || !e.mesh.visible) continue;
+    if (!e.alive || e.spawning) continue;
+    if (!inPlayable(e.mesh.position.x, e.mesh.position.z)) continue;
     const dx = e.mesh.position.x - px;
     const dz = e.mesh.position.z - pz;
-    if (dx * dx + dz * dz < 324) items.push(e);
+    if (dx * dx + dz * dz > 196) continue;
+    _see.copy(e.mesh.position);
+    _see.y += 1.05;
+    if (!canSee(_see)) continue;
+    items.push(e);
   }
   for (const pr of props) {
     if (!pr.alive) continue;
     const dx = pr.mesh.position.x - px;
     const dz = pr.mesh.position.z - pz;
-    if (dx * dx + dz * dz < 324) items.push(pr);
+    if (dx * dx + dz * dz > 196) continue;
+    items.push(pr);
   }
   while (hpLayer.children.length < items.length) {
     const d = document.createElement("div");
@@ -3418,19 +3921,6 @@ function updateHpBars() {
     el.style.transform = `translate(${(_v1.x * 0.5 + 0.5) * innerWidth}px, ${(-_v1.y * 0.5 + 0.5) * innerHeight}px)`;
     const fill = el._fill || (el._fill = el.firstElementChild);
     fill.style.transform = `scaleX(${Math.max(0, e.hp / e.hpMax)})`;
-  }
-}
-
-function tickLights() {
-  const px = player.position.x;
-  const pz = player.position.z;
-  const lim = 576;
-  for (let i = 0; i < mapLights.length; i++) {
-    const L = mapLights[i];
-    const dx = L.position.x - px;
-    const dz = L.position.z - pz;
-    const on = dx * dx + dz * dz < lim;
-    if (L.visible !== on) L.visible = on;
   }
 }
 
@@ -3491,25 +3981,39 @@ function updateFx(dt) {
   hurt.style.opacity = String(state.hurtFlash * 0.5);
   if (hurtL) hurtL.style.opacity = String(state.hurtL);
   if (hurtR) hurtR.style.opacity = String(state.hurtR);
-  hpFill.style.transform = `scaleX(${state.hp / 100})`;
+  if (hpFill._hp !== state.hp) {
+    hpFill._hp = state.hp;
+    hpFill.style.transform = `scaleX(${state.hp / 100})`;
+  }
   if (hpValue) {
-    hpValue.textContent = state.shield > 0
+    const hpTxt = state.shield > 0
       ? `${Math.max(0, Math.ceil(state.hp))} / 100  ·  ESC ${Math.ceil(state.shield)}`
       : `${Math.max(0, Math.ceil(state.hp))} / 100`;
+    setText(hpValue, hpTxt);
   }
-  if (shieldFill) shieldFill.style.transform = `scaleX(${state.shield / 80})`;
-  shieldGlow?.classList.toggle("hidden", state.shield <= 0);
-  if (heatFill) heatFill.style.transform = `scaleX(${state.heat / 100})`;
-  lockBanner.classList.toggle("hidden", !!document.pointerLockElement || state.paused);
+  if (shieldFill && shieldFill._sh !== state.shield) {
+    shieldFill._sh = state.shield;
+    shieldFill.style.transform = `scaleX(${state.shield / 80})`;
+  }
+  const showGlow = state.shield > 0;
+  if (shieldGlow && shieldGlow._on !== showGlow) {
+    shieldGlow._on = showGlow;
+    shieldGlow.classList.toggle("hidden", !showGlow);
+  }
+  if (heatFill && heatFill._ht !== state.heat) {
+    heatFill._ht = state.heat;
+    heatFill.style.transform = `scaleX(${state.heat / 100})`;
+  }
+  updateLockBanner();
   hitTimer -= dt;
   if (hitTimer <= 0) hitmarker.classList.remove("show", "kill", "armor");
   bannerTimer -= dt;
   if (bannerTimer <= 0) phaseBanner.classList.add("hidden");
 
-  const aliveE = enemies.filter((e) => e.alive && !e.spawning).length;
-  if (enemyCountEl) {
-    enemyCountEl.textContent = state.door && !state.door.open ? "Setor isolado" : `Inimigos: ${aliveE}`;
-  }
+  setText(
+    enemyCountEl,
+    state.door && !state.door.open ? "Setor isolado" : `Inimigos: ${state.aliveEnemies || 0}`
+  );
 
   if (state.timer > 0) {
     state.timer = Math.max(0, state.timer - dt);
@@ -3518,7 +4022,6 @@ function updateFx(dt) {
     timerLab.classList.toggle("low", state.timer < 20);
     if (state.timer <= 0 && !state.alarm) {
       state.alarm = true;
-      spawnEnemyNear("chaser", -22, 0);
       showBanner("TEMPO ESGOTADO");
       sfx.overheat();
     }
@@ -3527,8 +4030,8 @@ function updateFx(dt) {
   if (state.alarm && state.running) {
     state.alarmT -= dt;
     if (state.alarmT <= 0) {
-      state.alarmT = 1.15;
-      damage(7, player.position.clone().setZ(player.position.z - 2), LABELS.alarm);
+      state.alarmT = 1.7;
+      damage(4, player.position, LABELS.alarm);
     }
   }
 
@@ -3538,11 +4041,11 @@ function updateFx(dt) {
     state.beatT = 60 / bpm;
     sfx.beat(state.phase);
   }
-  if (audio.pulseGain && audio.ctx) {
+  if (audio.pulseGain && audio.ctx && (state._hudF || 0) % 8 === 0) {
     const t = audio.ctx.currentTime;
     audio.pulseGain.gain.setTargetAtTime(0.03 + state.phase * 0.012 + (state.overclock > 0 ? 0.02 : 0), t, 0.15);
   }
-  if (audio.alarmGain && audio.ctx) {
+  if (audio.alarmGain && audio.ctx && (state._hudF || 0) % 8 === 0) {
     audio.alarmGain.gain.setTargetAtTime(state.alarm ? 0.035 : 0, audio.ctx.currentTime, 0.1);
   }
 
@@ -3577,6 +4080,7 @@ function setPaused(v) {
   } else {
     if (!isMobilePlay()) canvas.requestPointerLock?.();
   }
+  updateLockBanner();
 }
 
 function finish(win) {
@@ -3678,7 +4182,32 @@ function resetGame() {
   alertEl?.classList.add("hidden");
   clearWorld();
   buildWorld();
+  warmRenderer();
   updateHudPhase();
+}
+
+function warmRenderer() {
+  for (let i = 0; i < 12; i++) {
+    const bolt = takeMesh(boltPool, () => {
+      const b = new THREE.Mesh(boltGeo, boltMat);
+      b.castShadow = false;
+      b.receiveShadow = false;
+      return b;
+    });
+    recycle(bolt, boltPool);
+    const bit = takeMesh(bitPool, () => {
+      const b = new THREE.Mesh(bitGeo, bitMaterial(0xff4028));
+      b.castShadow = false;
+      b.receiveShadow = false;
+      return b;
+    });
+    recycle(bit, bitPool);
+  }
+  try {
+    renderer.compile(scene, camera);
+  } catch (err) {
+    console.warn("compile", err);
+  }
 }
 
 let last = performance.now();
@@ -3697,8 +4226,8 @@ function loop(now) {
     updateSpawnDoor(dt);
     updateShots(dt);
     updateFx(dt);
+    tickSpawnQ();
     state._hudF = (state._hudF || 0) + 1;
-    if (state._hudF % 3 === 0) tickLights();
     if (state._hudF % 2 === 0) {
       updateMarker();
       updateMission();
@@ -3804,6 +4333,7 @@ document.addEventListener("mousedown", (e) => {
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement !== canvas) state.firing = false;
+  updateLockBanner();
 });
 window.addEventListener("blur", () => {
   state.firing = false;
