@@ -43,6 +43,7 @@ const crosshairEl = document.querySelector(".crosshair");
 const btnStart = document.getElementById("btn-start");
 const btnRetry = document.getElementById("btn-retry");
 const btnResume = document.getElementById("btn-resume");
+const btnPause = document.getElementById("btn-pause");
 const touchStick = document.getElementById("touch-stick");
 const touchKnob = touchStick?.querySelector("i");
 const touchLook = document.getElementById("touch-look");
@@ -179,17 +180,23 @@ const state = {
   useApplied: false,
 };
 
-const audio = { ctx: null, master: null, humGain: null, started: false, voices: 0, maxVoices: 8, buf: {} };
+const audio = { ctx: null, master: null, humGain: null, started: false, voices: 0, maxVoices: 8, buf: {}, muted: false, sfxPack: readSfxPack() };
+
+window.NEXO_SET_MUTE = (on) => {
+  audio.muted = !!on;
+  if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.4;
+};
 
 function initAudio() {
   if (audio.ctx) return;
   const ctx = new AudioContext();
   const master = ctx.createGain();
-  master.gain.value = 0.4;
+  master.gain.value = audio.muted ? 0 : 0.4;
   master.connect(ctx.destination);
   audio.ctx = ctx;
   audio.master = master;
   bakeSfx();
+  warmSfx();
 }
 
 function oscSample(type, t, freq) {
@@ -200,11 +207,11 @@ function oscSample(type, t, freq) {
   return Math.sin(t * freq * Math.PI * 2);
 }
 
-function mixToneAt(d, sr, freq, vol, type, slide = 0, delay = 0) {
+function mixToneAt(d, sr, freq, vol, type, slide = 0, delay = 0, decay = 18) {
   const start = (delay * sr) | 0;
   for (let i = start; i < d.length; i++) {
     const t = (i - start) / sr;
-    const env = Math.exp(-t * 18);
+    const env = Math.exp(-t * decay);
     const f = slide ? Math.max(40, freq + slide * ((i - start) / Math.max(1, d.length - start))) : freq;
     d[i] += oscSample(type, t, f) * vol * env;
   }
@@ -222,7 +229,15 @@ function bakeBuf(dur, write) {
   return buf;
 }
 
-function bakeSfx() {
+function readSfxPack() {
+  try {
+    return localStorage.getItem("nexoSfx") === "classic" ? "classic" : "new";
+  } catch (_) {
+    return "new";
+  }
+}
+
+function bakeSfxClassic() {
   const b = audio.buf;
   b.pistola = bakeBuf(0.12, (d, sr) => {
     mixNoise(d, 0.22, 2.2);
@@ -279,8 +294,103 @@ function bakeSfx() {
   });
 }
 
+function bakeSfxNew() {
+  const b = audio.buf;
+  b.pistola = bakeBuf(0.22, (d, sr) => {
+    mixNoise(d, 0.34, 3.4);
+    mixToneAt(d, sr, 210, 0.22, "sine", -90, 0, 14);
+    mixToneAt(d, sr, 980, 0.1, "triangle", -520, 0, 22);
+    mixToneAt(d, sr, 1650, 0.06, "square", -900, 0, 36);
+  });
+  b.rifle = bakeBuf(0.14, (d, sr) => {
+    mixNoise(d, 0.28, 3.8);
+    mixToneAt(d, sr, 280, 0.16, "sine", -70, 0, 16);
+    mixToneAt(d, sr, 1180, 0.09, "square", -640, 0, 28);
+  });
+  b.escopeta = bakeBuf(0.32, (d, sr) => {
+    mixNoise(d, 0.42, 1.8);
+    mixToneAt(d, sr, 90, 0.28, "sawtooth", -40, 0, 9);
+    mixToneAt(d, sr, 240, 0.16, "sine", -80, 0.01, 11);
+    mixToneAt(d, sr, 1400, 0.05, "square", -700, 0.02, 24);
+  });
+  b.pickup = bakeBuf(0.32, (d, sr) => {
+    mixToneAt(d, sr, 392, 0.14, "sine", 40, 0, 10);
+    mixToneAt(d, sr, 523, 0.13, "triangle", 50, 0.05, 10);
+    mixToneAt(d, sr, 784, 0.11, "sine", 80, 0.12, 9);
+  });
+  b.dry = bakeBuf(0.1, (d, sr) => {
+    mixToneAt(d, sr, 980, 0.08, "square", 0, 0, 28);
+    mixNoise(d, 0.08, 3);
+  });
+  b.hitmark = bakeBuf(0.07, (d, sr) => {
+    mixToneAt(d, sr, 2100, 0.09, "triangle", 0, 0, 32);
+    mixToneAt(d, sr, 3100, 0.06, "sine", 0, 0.012, 38);
+  });
+  b.kitReady = bakeBuf(0.22, (d, sr) => {
+    mixToneAt(d, sr, 360, 0.12, "sine", 40, 0, 12);
+    mixToneAt(d, sr, 540, 0.11, "triangle", 70, 0.06, 11);
+  });
+  b.shieldReady = bakeBuf(0.26, (d, sr) => {
+    mixToneAt(d, sr, 180, 0.14, "sine", 50, 0, 10);
+    mixToneAt(d, sr, 360, 0.12, "triangle", 90, 0.07, 10);
+  });
+  b.droneHit = bakeBuf(0.14, (d, sr) => {
+    mixNoise(d, 0.16, 2.4);
+    mixToneAt(d, sr, 190, 0.14, "triangle", -70, 0, 16);
+  });
+  b.droneShot = bakeBuf(0.14, (d, sr) => {
+    mixToneAt(d, sr, 320, 0.13, "sawtooth", -140, 0, 14);
+    mixNoise(d, 0.12, 2.6);
+  });
+  b.droneDie = bakeBuf(0.42, (d, sr) => {
+    mixToneAt(d, sr, 110, 0.2, "sawtooth", -55, 0, 7);
+    mixNoise(d, 0.22, 1.2);
+    mixToneAt(d, sr, 70, 0.12, "sine", -20, 0.08, 6);
+  });
+  b.armor = bakeBuf(0.1, (d, sr) => {
+    mixToneAt(d, sr, 170, 0.11, "square", 0, 0, 22);
+    mixNoise(d, 0.1, 2.4);
+  });
+  b.hit = bakeBuf(0.24, (d, sr) => {
+    mixNoise(d, 0.26, 1.7);
+    mixToneAt(d, sr, 62, 0.2, "sine", -18, 0, 8);
+  });
+  b.foot = bakeBuf(0.08, (d, sr) => {
+    mixNoise(d, 0.14, 3.2);
+    mixToneAt(d, sr, 88, 0.08, "sine", -20, 0, 22);
+  });
+  b.footSprint = bakeBuf(0.07, (d, sr) => {
+    mixNoise(d, 0.18, 3);
+    mixToneAt(d, sr, 110, 0.09, "sine", -25, 0, 24);
+  });
+}
+
+function bakeSfx() {
+  audio.buf = {};
+  if ((audio.sfxPack || readSfxPack()) === "classic") bakeSfxClassic();
+  else bakeSfxNew();
+}
+
+function applySfxPack(pack) {
+  audio.sfxPack = pack === "classic" ? "classic" : "new";
+  try {
+    localStorage.setItem("nexoSfx", audio.sfxPack);
+  } catch (_) {}
+  if (audio.ctx) bakeSfx();
+  syncSfxButtons();
+}
+
+function syncSfxButtons() {
+  const pack = audio.sfxPack || readSfxPack();
+  const label = pack === "classic" ? "SOM: CLÁSSICO" : "SOM: NOVO";
+  for (const id of ["btn-sfx", "btn-sfx-pause"]) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = label;
+  }
+}
+
 function playSfx(name) {
-  if (!audio.ctx) return;
+  if (!audio.ctx || audio.muted) return;
   const buf = audio.buf[name];
   if (!buf || audio.voices >= audio.maxVoices) return;
   audio.voices += 1;
@@ -288,11 +398,30 @@ function playSfx(name) {
   src.buffer = buf;
   src.connect(audio.master);
   src.onended = () => { audio.voices = Math.max(0, audio.voices - 1); };
-  src.start();
+  try {
+    src.start();
+  } catch (_) {
+    audio.voices = Math.max(0, audio.voices - 1);
+  }
+}
+
+function warmSfx() {
+  if (!audio.ctx) return;
+  const g = audio.ctx.createGain();
+  g.gain.value = 0;
+  g.connect(audio.master);
+  for (const name of Object.keys(audio.buf)) {
+    const src = audio.ctx.createBufferSource();
+    src.buffer = audio.buf[name];
+    src.connect(g);
+    try {
+      src.start();
+    } catch (_) {}
+  }
 }
 
 function beep(freq, dur, type = "square", vol = 0.16, slide = 0, pan = 0) {
-  if (!audio.ctx || audio.voices >= audio.maxVoices) return;
+  if (!audio.ctx || audio.muted || audio.voices >= audio.maxVoices) return;
   const t = audio.ctx.currentTime;
   const o = audio.ctx.createOscillator();
   const g = audio.ctx.createGain();
@@ -327,7 +456,7 @@ function noiseBuffer(dur) {
 }
 
 function noiseBurst(dur = 0.07, vol = 0.16, freq = 1600) {
-  if (!audio.ctx || audio.voices >= audio.maxVoices) return;
+  if (!audio.ctx || audio.muted || audio.voices >= audio.maxVoices) return;
   const t = audio.ctx.currentTime;
   const src = audio.ctx.createBufferSource();
   src.buffer = noiseBuffer(dur);
@@ -416,6 +545,10 @@ function startAmbience() {
 
 const sfx = {
   foot(sprint) {
+    if ((audio.sfxPack || "new") !== "classic" && audio.buf.foot) {
+      playSfx(sprint ? "footSprint" : "foot");
+      return;
+    }
     noiseBurst(0.05, sprint ? 0.16 : 0.11, sprint ? 900 : 620);
     beep(sprint ? 95 : 80, 0.06, "sine", 0.07);
   },
@@ -575,11 +708,24 @@ function syncPlayMode() {
   mobilePlay =
     window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(hover: none)").matches;
   document.documentElement.classList.toggle("nexo-touch", mobilePlay);
+  syncOrientation();
   if (gfxReady) applyQuality();
+}
+
+function syncOrientation() {
+  const portrait = window.matchMedia("(orientation: portrait)").matches;
+  document.documentElement.classList.toggle("nexo-portrait", isMobilePlay() && portrait);
+}
+
+function lockLandscape() {
+  const o = screen.orientation;
+  if (!o?.lock) return Promise.resolve();
+  return o.lock("landscape").catch(() => {});
 }
 syncPlayMode();
 window.matchMedia("(pointer: coarse)").addEventListener?.("change", syncPlayMode);
 window.matchMedia("(hover: none)").addEventListener?.("change", syncPlayMode);
+window.matchMedia("(orientation: portrait)").addEventListener?.("change", syncOrientation);
 
 function viewSize() {
   if (document.fullscreenElement || document.webkitFullscreenElement) {
@@ -624,17 +770,20 @@ function isFullscreen() {
 function enterFullscreen() {
   window.scrollTo(0, 0);
   if (isFullscreen()) {
+    lockLandscape();
     resizeView();
     return;
   }
   const el = document.documentElement;
   const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
   if (!req) {
+    lockLandscape();
     resizeView();
     return;
   }
   Promise.resolve(req.call(el, { navigationUI: "hide" }))
     .catch(() => {})
+    .then(() => lockLandscape())
     .finally(() => resizeView());
 }
 
@@ -682,10 +831,10 @@ function applyQuality() {
   if (!gfxReady) return;
   const mobile = isMobilePlay();
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, mobile ? 1.15 : 1.5));
-  renderer.shadowMap.enabled = !mobile;
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  sun.castShadow = !mobile;
-  sun.shadow.mapSize.set(mobile ? 512 : 2048, mobile ? 512 : 2048);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
   dust.visible = !mobile;
 }
 gfxReady = true;
@@ -833,19 +982,30 @@ function loadOneAsset(loader, key, url, ms = 8000) {
 }
 
 async function loadAssets() {
-  const loader = new GLTFLoader();
-  await Promise.all(Object.entries(ASSET_URLS).map(([key, url]) => loadOneAsset(loader, key, url)));
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch("blender/glb/map_station.json", { signal: ctrl.signal });
-    clearTimeout(t);
-    if (res.ok) mapMeta = await res.json();
-  } catch (err) {
-    console.warn("map meta fail", err);
+    await window.NEXO_PORTAL?.ready;
+  } catch (_) {}
+  window.NEXO_PORTAL?.loadingStart?.();
+  try {
+    const loader = new GLTFLoader();
+    await Promise.all(Object.entries(ASSET_URLS).map(([key, url]) => loadOneAsset(loader, key, url)));
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch("blender/glb/map_station.json", { signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) mapMeta = await res.json();
+    } catch (err) {
+      console.warn("map meta fail", err);
+    }
+    assetsReady = true;
+    for (const t of ["pistola", "rifle", "escopeta"]) getViewGun(t);
+    warmEnemyGlbs();
+    warmCells();
+    warmDeployments();
+  } finally {
+    window.NEXO_PORTAL?.loadingFinished?.();
   }
-  assetsReady = true;
-  for (const t of ["pistola", "rifle", "escopeta"]) getViewGun(t);
 }
 
 function buildGunModel(type) {
@@ -1128,6 +1288,10 @@ const shotPool = [];
 const bitPool = [];
 const bitRecPool = [];
 const shotRecPool = [];
+const enemyGlbPool = { drone: [], chaser: [], turret: [], heavy: [] };
+const cellGlbPool = [];
+const deployPool = [];
+let spawnQWait = 0;
 const bitMats = new Map();
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -1135,6 +1299,90 @@ const _v3 = new THREE.Vector3();
 const _upY = new THREE.Vector3(0, 1, 0);
 const _guideA = new THREE.Vector3();
 const _guideB = new THREE.Vector3();
+
+function parkFx(obj) {
+  if (!obj) return;
+  obj.visible = false;
+  obj.parent?.remove(obj);
+  fxLayer.add(obj);
+}
+
+function takeEnemyGlb(kind) {
+  const pile = enemyGlbPool[kind];
+  const glb = pile && pile.pop();
+  if (glb) {
+    glb.visible = true;
+    glb.position.set(0, 0, 0);
+    glb.rotation.set(0, 0, 0);
+    glb.scale.setScalar(1);
+    glb.parent?.remove(glb);
+    return glb;
+  }
+  return cloneAsset(`enemy_${kind}`, 1, false);
+}
+
+function recycleEnemyGlb(e) {
+  if (!e?.glb) return;
+  const glb = e.glb;
+  e.glb = null;
+  const pile = enemyGlbPool[e.kind];
+  if (!pile || pile.length >= 8) {
+    glb.parent?.remove(glb);
+    return;
+  }
+  parkFx(glb);
+  glb.position.set(0, -80, 0);
+  pile.push(glb);
+}
+
+function warmEnemyGlbs() {
+  for (const kind of ["drone", "chaser", "turret", "heavy"]) {
+    const pile = enemyGlbPool[kind];
+    const need = kind === "drone" ? 4 : kind === "chaser" ? 3 : 2;
+    while (pile.length < need) {
+      const glb = cloneAsset(`enemy_${kind}`, 1, false);
+      if (!glb) break;
+      stripLights(glb);
+      glb.visible = false;
+      glb.position.set(0, -80, 0);
+      fxLayer.add(glb);
+      pile.push(glb);
+    }
+  }
+}
+
+function takeCellGlb(scale = 1) {
+  const g = cellGlbPool.pop();
+  if (g) {
+    g.visible = true;
+    g.scale.setScalar(scale);
+    g.position.set(0, 0, 0);
+    g.rotation.set(0, 0, 0);
+    g.parent?.remove(g);
+    return g;
+  }
+  return cloneAsset("prop_cell", scale, false);
+}
+
+function warmCells() {
+  while (cellGlbPool.length < 4) {
+    const g = cloneAsset("prop_cell", 1, false);
+    if (!g) break;
+    g.visible = false;
+    g.position.set(0, -80, 0);
+    fxLayer.add(g);
+    cellGlbPool.push(g);
+  }
+}
+
+function warmDeployments() {
+  while (deployPool.length < 3) recycleDeployment(createDeploymentRig(0, -80));
+}
+
+function queueSpawn(job) {
+  spawnQ.push(job);
+  spawnQWait = Math.max(spawnQWait, 2);
+}
 
 function takeMesh(pool, make) {
   let m = pool.pop();
@@ -1335,44 +1583,55 @@ const GATE_LOOK = {
 };
 
 function addGate(id, x, z, w, h, d) {
-  // O vão da parede é 5.2 m. A chapa antiga tinha 4.8 e deixava fresta dos dois lados.
   const alongX = w >= d;
   const span = 5.72;
-  const thick = 0.84;
+  const thick = 0.42;
   const height = 5.16;
   const cy = height / 2 - 0.04;
   const accent = GATE_LOOK[id] || 0xff3a3a;
-  const bodyMat = metal(0x141a22, { roughness: 0.4, metalness: 0.74 });
-  const edgeMat = metal(0x0b1016, { roughness: 0.32, metalness: 0.86 });
-  const frameMat = metal(0x2c3640, { roughness: 0.3, metalness: 0.84 });
+  const frameMat = metal(0x303943, { roughness: 0.3, metalness: 0.88 });
+  const edgeMat = metal(0x080b0f, { roughness: 0.22, metalness: 0.92 });
+  const panelMat = metal(0x171e26, { roughness: 0.34, metalness: 0.8 });
   const group = new THREE.Group();
   group.position.set(x, 0, z);
   if (!alongX) group.rotation.y = Math.PI / 2;
 
-  const slab = mesh(new THREE.BoxGeometry(span, height, thick), bodyMat, 0, cy, 0);
-  group.add(slab);
-  const face = thick / 2 + 0.012;
-  const leafW = 2.62;
-  for (const side of [1, -1]) {
-    for (const hand of [-1, 1]) {
-      const lx = hand * 1.34;
-      const leaf = mesh(new THREE.BoxGeometry(leafW, 4.55, 0.05), edgeMat, lx, cy, side * face);
-      group.add(leaf);
-      const inset = mesh(new THREE.BoxGeometry(2.15, 3.15, 0.03), bodyMat, lx, cy + 0.05, side * (face + 0.03));
-      group.add(inset);
-      for (let i = -1; i <= 1; i++) {
-        const brace = mesh(new THREE.BoxGeometry(1.35, 0.07, 0.028), frameMat, lx, cy + i * 0.72, side * (face + 0.05));
-        brace.rotation.z = hand * 0.48;
-        group.add(brace);
-      }
-    }
-    const seam = mesh(new THREE.BoxGeometry(0.16, 4.7, 0.07), frameMat, 0, cy, side * (face + 0.02));
-    const railT = mesh(new THREE.BoxGeometry(span - 0.2, 0.16, 0.06), frameMat, 0, cy + 2.28, side * (face + 0.02));
-    const railB = mesh(new THREE.BoxGeometry(span - 0.2, 0.16, 0.06), frameMat, 0, cy - 2.22, side * (face + 0.02));
-    const strip = mesh(new THREE.BoxGeometry(span * 0.62, 0.045, 0.02), emit(accent, 1.05), 0, 0.38, side * (face + 0.055));
+  group.add(
+    mesh(new THREE.BoxGeometry(0.32, height, 0.58), frameMat, -span / 2 + 0.1, cy, 0),
+    mesh(new THREE.BoxGeometry(0.32, height, 0.58), frameMat, span / 2 - 0.1, cy, 0),
+    mesh(new THREE.BoxGeometry(span, 0.32, 0.58), frameMat, 0, height - 0.2, 0)
+  );
+
+  const leafW = (span - 0.52) / 2;
+  const leafH = height - 0.52;
+  for (const side of [-1, 1]) {
+    const leaf = new THREE.Group();
+    leaf.position.set(side * (leafW / 2 + 0.06), cy, 0);
+    leaf.add(
+      mesh(new THREE.BoxGeometry(leafW, leafH, 0.22), panelMat),
+      mesh(new THREE.BoxGeometry(leafW - 0.42, leafH - 1.05, 0.05), edgeMat, 0, 0, 0.135),
+      mesh(new THREE.BoxGeometry(leafW - 0.36, 0.38, 0.08), frameMat, 0, leafH / 2 - 0.42, 0.17),
+      mesh(new THREE.BoxGeometry(leafW - 0.36, 0.38, 0.08), frameMat, 0, -leafH / 2 + 0.42, 0.17),
+      mesh(new THREE.BoxGeometry(0.1, leafH - 1.15, 0.09), frameMat, side * (leafW / 2 - 0.28), 0, 0.18)
+    );
+    const strip = mesh(new THREE.BoxGeometry(leafW * 0.52, 0.05, 0.02), emit(accent, 1.1), 0, -leafH * 0.28, 0.16);
     strip.castShadow = false;
-    group.add(seam, railT, railB, strip);
+    leaf.add(strip);
+    for (let i = -1; i <= 1; i++) {
+      const brace = mesh(new THREE.BoxGeometry(leafW * 0.42, 0.09, 0.08), frameMat, 0, i * 0.72, 0.19);
+      brace.rotation.z = side * 0.58;
+      leaf.add(brace);
+    }
+    group.add(leaf);
   }
+
+  const statusMat = emit(0xff3030, 2.4);
+  const status = mesh(new THREE.BoxGeometry(0.38, 0.08, 0.04), statusMat, 0, height - 0.38, 0.34);
+  status.castShadow = false;
+  group.add(
+    mesh(new THREE.BoxGeometry(0.62, 0.22, 0.28), edgeMat, 0, height - 0.38, 0.22),
+    status
+  );
   group.traverse((o) => {
     if (!o.isMesh) return;
     const glow = o.material?.emissive && o.material.emissive.r + o.material.emissive.g + o.material.emissive.b > 0.2;
@@ -1738,7 +1997,6 @@ function mountBlenderMap() {
   const H = 5;
   addGate("east", 14, 0, 0.55, H, 4.8);
   addGate("west", -14, 0, 0.55, H, 4.8);
-  addGate("south", 0, 14, 4.8, H, 0.55);
   addGate("north", 0, -14, 4.8, H, 0.55);
   buildSpawnDoor(false);
   return true;
@@ -1777,7 +2035,6 @@ function buildWorld() {
 
   addGate("east", hub, 0, 0.55, H, 4.8);
   addGate("west", -hub, 0, 0.55, H, 4.8);
-  addGate("south", 0, hub, 4.8, H, 0.55);
   addGate("north", 0, -hub, 4.8, H, 0.55);
 
   addSolid(18.5, H / 2, 11, 11, H, 0.65, wMat);
@@ -1997,7 +2254,7 @@ function spawnPhase(n) {
     spawnEnemy("drone", -3.8, 27.2);
     spawnEnemy("chaser", -29.2, -4.2);
     spawnEnemy("chaser", -23.4, 7.4);
-    spawnEnemy("chaser", 6.8, 21.8);
+    spawnEnemy("chaser", 6.8, 24.8);
     spawnEnemy("turret", -30.2, 1.2);
   }
   if (n === 4) {
@@ -2281,7 +2538,7 @@ function spawnCore(x, z, first = false, locked = false) {
   const group = new THREE.Group();
   group.position.set(x, 1.08, z);
   const scale = first ? 1.15 : 1;
-  const cell = cloneAsset("prop_cell", scale, false) || mesh(
+  const cell = takeCellGlb(scale) || mesh(
     new THREE.CylinderGeometry(0.17 * scale, 0.17 * scale, 0.52 * scale, 12),
     metal(0x1c262e, { roughness: 0.35, metalness: 0.6 })
   );
@@ -2386,7 +2643,7 @@ function chargeReactor(r) {
 
 function startCellInsert(r, seat, led, onDone) {
   // Berço interno ~0.22 x 0.32. 0.58 deixa a célula dentro do quadrado.
-  const cell = cloneAsset("prop_cell", 0.58, false) || mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.26, 10), emit(0x2affd0, 1.4));
+  const cell = takeCellGlb(0.58) || mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.26, 10), emit(0x2affd0, 1.4));
   r.mesh.add(cell);
   const end = seat.clone();
   end.z -= 0.03;
@@ -2441,16 +2698,15 @@ function showAlert(text) {
 
 function retireAliveEnemies() {
   spawnQ.length = 0;
+  spawnQWait = 0;
   for (const e of enemies) {
     e.alive = false;
     e.spawning = false;
     e.carriesCell = false;
+    recycleEnemyGlb(e);
+    recycleDeployment(e.deployment);
+    e.deployment = null;
     if (e.mesh) e.mesh.visible = false;
-    const d = e.deployment;
-    if (!d) continue;
-    if (d.rig) d.rig.visible = false;
-    if (d.cableL) d.cableL.visible = false;
-    if (d.cableR) d.cableR.visible = false;
   }
   for (const s of enemyShots) recycle(s.mesh, shotPool);
   enemyShots.length = 0;
@@ -2470,29 +2726,34 @@ function spawnReinforcements() {
     [-3.4, -4.8],
   ];
   let queued = 0;
-  const px = player.position.x;
-  const pz = player.position.z;
+  let px = player.position.x;
+  let pz = player.position.z;
+  if (inHangar(px, pz) || !wingUnlocked(wingOf(px, pz))) {
+    px = 0;
+    pz = 4;
+  }
   for (const [ox, oz] of offsets) {
     if (queued >= want) break;
     const x = px + ox;
     const z = pz + oz;
-    if (wingOf(x, z) !== wingOf(px, pz)) continue;
-    if (!inPlayable(x, z)) continue;
-    spawnQ.push({ kind, x, z });
+    if (!wingUnlocked(wingOf(x, z))) continue;
+    if (!inPlayable(x, z) || inHangar(x, z)) continue;
+    queueSpawn({ kind, x, z });
     queued += 1;
   }
 }
 
 function tickSpawnQ() {
-  if (!spawnQ.length || !state.running || state.paused) return;
-  for (let n = 0; n < 4 && spawnQ.length; n++) {
-    const job = spawnQ.shift();
-    if (job.kind === "core") {
-      spawnCore(job.x, job.z);
-      return;
-    }
-    if (spawnEnemyNear(job.kind, job.x, job.z)) return;
+  if (!state.running || state.paused) return;
+  if (spawnQWait > 0) {
+    spawnQWait -= 1;
+    return;
   }
+  if (!spawnQ.length) return;
+  const job = spawnQ.shift();
+  if (job.kind === "core") spawnCore(job.x, job.z);
+  else spawnEnemyNear(job.kind, job.x, job.z);
+  if (spawnQ.length) spawnQWait = 1;
 }
 
 function updateInv() {
@@ -2589,6 +2850,38 @@ function createDeploymentRig(x, z) {
   return { rig, panelL, panelR, warningMat: deployWarnMat, cableL, cableR };
 }
 
+function recycleDeployment(d) {
+  if (!d || d._pooled) return;
+  d._pooled = true;
+  d.panelL.position.x = -0.35;
+  d.panelR.position.x = 0.35;
+  d.cableL.scale.y = 1;
+  d.cableR.scale.y = 1;
+  parkFx(d.rig);
+  parkFx(d.cableL);
+  parkFx(d.cableR);
+  if (deployPool.length < 12) deployPool.push(d);
+}
+
+function takeDeployment(x, z) {
+  const d = deployPool.pop();
+  if (!d) return createDeploymentRig(x, z);
+  d._pooled = false;
+  d.rig.parent?.remove(d.rig);
+  d.cableL.parent?.remove(d.cableL);
+  d.cableR.parent?.remove(d.cableR);
+  d.rig.position.set(x, 4.72, z);
+  d.rig.visible = true;
+  d.panelL.position.x = -0.35;
+  d.panelR.position.x = 0.35;
+  d.cableL.position.set(x - 0.24, 4.65, z);
+  d.cableR.position.set(x + 0.24, 4.65, z);
+  d.cableL.visible = d.cableR.visible = false;
+  d.cableL.scale.y = d.cableR.scale.y = 1;
+  world.add(d.rig, d.cableL, d.cableR);
+  return d;
+}
+
 function stripLights(root) {
   const drop = [];
   root.traverse((o) => {
@@ -2598,18 +2891,19 @@ function stripLights(root) {
 }
 
 function pushEnemy(root, kind, x, z, extra) {
-  const glb = cloneAsset(`enemy_${kind}`, 1, false);
+  const glb = takeEnemyGlb(kind);
   if (glb) {
     const drop = [];
     for (const c of root.children) drop.push(c);
     for (const c of drop) root.remove(c);
     root.add(glb);
+    extra.glb = glb;
     extra.ring = extra.ring || new THREE.Object3D();
     extra.ring2 = extra.ring2 || new THREE.Object3D();
     extra.thrusters = [];
   }
   stripLights(root);
-  const deployment = createDeploymentRig(x, z);
+  const deployment = takeDeployment(x, z);
   root.position.y = 5.45;
   root.scale.setScalar(1);
   world.add(root);
@@ -2645,8 +2939,64 @@ function bindCarrierCell(kind) {
   e.cellMesh = cell;
 }
 
+const _dummyRing = new THREE.Object3D();
+let visorChaserMat;
+let visorRedMat;
+
+function enemyVisor(kind) {
+  const src = kind === "chaser"
+    ? visorChaserMat || (visorChaserMat = emit(0xff8a22, 1.6))
+    : visorRedMat || (visorRedMat = emit(0xff2a33, 1.6));
+  return src.clone();
+}
+
+function enemyStats(kind, visorMat) {
+  const dummy = _dummyRing;
+  if (kind === "turret") {
+    return {
+      ring: dummy, ring2: dummy, visorMat, thrusters: [],
+      hp: 7, radius: 0.7, hoverY: 0, speed: 0, chaseSpeed: 0, range: 16,
+      shotDmg: 12, shotSpeed: 22, shotLife: 1.1, fireCd: 0.9, windupTime: 0.28,
+      melee: 0, meleeDmg: 0, boltColor: 0xff6644, boltSize: 0.09,
+    };
+  }
+  if (kind === "chaser") {
+    return {
+      ring: dummy, ring2: dummy, visorMat, thrusters: [],
+      hp: 3, radius: 0.42, hoverY: 0.7, speed: 2.4, chaseSpeed: 5.1, range: 12,
+      shotDmg: 0, shotSpeed: 0, shotLife: 0, fireCd: 0.82, windupTime: 0,
+      melee: 1.3, meleeDmg: 12, boltColor: 0xff7a22, boltSize: 0.08,
+    };
+  }
+  if (kind === "heavy") {
+    return {
+      ring: dummy, ring2: dummy, visorMat, thrusters: [],
+      hp: 8, radius: 0.9, hoverY: 1.15, speed: 0.9, chaseSpeed: 1.7, range: 15,
+      shotDmg: 28, shotSpeed: 12, shotLife: 1.4, fireCd: 1.55, windupTime: 0.55,
+      melee: 1.7, meleeDmg: 18, boltColor: 0xff2208, boltSize: 0.18,
+    };
+  }
+  return {
+    ring: dummy, ring2: dummy, visorMat, thrusters: [],
+    hp: 5, radius: 0.55, hoverY: 1.35, speed: 1.5, chaseSpeed: 3.2, range: 11,
+    shotDmg: 11, shotSpeed: 18, shotLife: 1.05, fireCd: 1.05, windupTime: 0.32,
+    melee: 1.45, meleeDmg: 8, boltColor: 0xff4a32, boltSize: 0.08,
+  };
+}
+
 function spawnEnemy(kind, x, z, carriesCell = false) {
+  const snapped = findOpenSpot(x, z, true);
+  if (!snapped) return;
+  x = snapped[0];
+  z = snapped[1];
   const root = new THREE.Group();
+  if (assets[`enemy_${kind}`]) {
+    const extra = enemyStats(kind, enemyVisor(kind));
+    root.position.set(x, extra.hoverY, z);
+    pushEnemy(root, kind, x, z, extra);
+    if (carriesCell) bindCarrierCell(kind);
+    return;
+  }
   const hull = metal(0x1a2028, { roughness: 0.28, metalness: 0.82 });
   const dark = metal(0x0b0e13, { roughness: 0.22, metalness: 0.88 });
   const visorMat = emit(kind === "chaser" ? 0xff8a22 : 0xff2a33, 1.6);
@@ -2817,6 +3167,13 @@ function spawnEnemy(kind, x, z, carriesCell = false) {
 }
 
 function clearWorld() {
+  spawnQ.length = 0;
+  spawnQWait = 0;
+  for (const e of enemies) {
+    recycleEnemyGlb(e);
+    recycleDeployment(e.deployment);
+    e.deployment = null;
+  }
   while (world.children.length) world.remove(world.children[0]);
   cores.length = 0;
   reactors.length = 0;
@@ -2928,12 +3285,34 @@ function canSee(from) {
   );
 }
 
+const WING_SAFE = {
+  hangar: [0, 18],
+  hub: [0, 3.2],
+  east: [24, 0],
+  west: [-24, 0],
+  south: [0, 26.2],
+  north: [0, -24.2],
+};
+
+function inHangar(x, z) {
+  return z > 14.45 && z < 21.2 && Math.abs(x) < 3.35;
+}
+
 function wingOf(x, z) {
+  if (inHangar(x, z)) return "hangar";
   if (x > 13.6) return "east";
   if (x < -13.6) return "west";
-  if (z > 13.6) return "south";
+  if (z > 21.3) return "south";
   if (z < -13.6) return "north";
   return "hub";
+}
+
+function wingUnlocked(wing) {
+  if (wing === "hub" || wing === "hangar") return true;
+  if (wing === "east") return state.phase >= 2;
+  if (wing === "west" || wing === "south") return state.phase >= 3;
+  if (wing === "north") return state.phase >= 4;
+  return false;
 }
 
 function inPlayable(x, z) {
@@ -2942,34 +3321,44 @@ function inPlayable(x, z) {
   if (ax < 13.15 && az < 13.15) return true;
   if (x > 13.55 && x < 32.35 && az < 10.35) return true;
   if (x < -13.55 && x > -32.35 && az < 10.35) return true;
-  if (z > 13.55 && z < 31.05 && ax < 10.35) return true;
+  if (z > 21.55 && z < 31.05 && ax < 10.35) return true;
   if (z < -13.55 && z > -31.05 && ax < 10.35) return true;
-  if (z > 14.6 && z < 21.1 && ax < 3.35) return true;
+  if (z > 14.55 && z < 21.15 && ax < 3.15) return true;
+  if (z > 13.15 && z < 15.45 && ax < 1.38) return true;
+  if (x > 22.55 && x < 28.2 && z > 10.4 && z < 14.85) return true;
   return false;
 }
 
-function findOpenSpot(x, z) {
+function findOpenSpot(x, z, combat = false, depth = 0) {
+  let wing = wingOf(x, z);
+  if (combat && (wing === "hangar" || !wingUnlocked(wing))) {
+    wing = "hub";
+    x = WING_SAFE.hub[0];
+    z = WING_SAFE.hub[1];
+  }
   const y = 1.15;
-  const wing = wingOf(x, z);
-  for (const r of [0, 1.4, 2.6, 4]) {
-    const n = r === 0 ? 1 : 10;
+  for (const r of [0, 0.9, 1.7, 2.6, 3.8, 5.2, 7]) {
+    const n = r === 0 ? 1 : 12;
     for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + r;
+      const a = (i / n) * Math.PI * 2 + r * 0.7;
       const px = x + Math.cos(a) * r;
       const pz = z + Math.sin(a) * r;
+      if (combat && inHangar(px, pz)) continue;
       if (wingOf(px, pz) !== wing) continue;
       if (!inPlayable(px, pz)) continue;
       if (pointBlocked(px, y, pz)) continue;
-      if (pointBlocked(px + 0.5, y, pz) || pointBlocked(px - 0.5, y, pz)) continue;
-      if (pointBlocked(px, y, pz + 0.5) || pointBlocked(px, y, pz - 0.5)) continue;
+      if (pointBlocked(px + 0.45, y, pz) || pointBlocked(px - 0.45, y, pz)) continue;
+      if (pointBlocked(px, y, pz + 0.45) || pointBlocked(px, y, pz - 0.45)) continue;
       return [px, pz];
     }
   }
-  return null;
+  if (depth > 1) return null;
+  const fb = WING_SAFE[wing] || WING_SAFE.hub;
+  return findOpenSpot(fb[0], fb[1], combat, depth + 1);
 }
 
 function spawnEnemyNear(kind, x, z, carriesCell = false) {
-  const spot = findOpenSpot(x, z);
+  const spot = findOpenSpot(x, z, true);
   if (!spot) return false;
   spawnEnemy(kind, spot[0], spot[1], carriesCell);
   return true;
@@ -3151,6 +3540,7 @@ function spawnBits(pos, color, n = 10) {
 }
 
 function shoot() {
+  if (window.NEXO_PORTAL?.adLock) return;
   if (!state.running || state.paused || state.shootCd > 0 || state.overheat || state.reloading || state.using) return;
   const w = WEAPONS[state.weapon];
   if (state.ammo <= 0) {
@@ -3172,7 +3562,6 @@ function shoot() {
     }
   }
   sfx.shoot(state.weapon);
-  muzzle.intensity = oc ? 4.5 : 3.2;
   const aimControl = THREE.MathUtils.lerp(1, 0.55, state.aim);
   state.shotKick = (state.weapon === "escopeta" ? 1.35 : state.weapon === "rifle" ? 0.72 : 0.9) * aimControl;
   state.shotFlash = state.weapon === "escopeta" ? 0.095 : 0.06;
@@ -3332,7 +3721,7 @@ function showHit(kill, armor = false, critical = false) {
   hitmarker.classList.toggle("kill", !!kill);
   hitmarker.classList.toggle("armor", !!armor);
   hitmarker.classList.toggle("critical", !!critical && !armor);
-  if (!armor) sfx.hitmark();
+  if (!armor && state.shotFlash <= 0) sfx.hitmark();
   hitTimer = armor ? 0.08 : 0.12;
 }
 
@@ -3366,17 +3755,20 @@ function hitEnemy(e, point, dmg = 1) {
   const zoneMultiplier = hitZoneMultiplier(e, point);
   const finalDamage = dmg * zoneMultiplier;
   e.hp -= finalDamage;
-  sfx.droneHit();
+  if (state.shotFlash <= 0) sfx.droneHit();
   e.mesh.scale.setScalar(1.12);
   const dead = e.hp <= 0;
   showHit(dead, false, zoneMultiplier >= 1.4);
   if (dead) {
     e.alive = false;
+    recycleEnemyGlb(e);
+    recycleDeployment(e.deployment);
+    e.deployment = null;
     e.mesh.visible = false;
     spawnBits(e.mesh.position, 0xff4028, 4);
     if (e.carriesCell) {
       e.carriesCell = false;
-      spawnQ.push({ kind: "core", x: e.mesh.position.x, z: e.mesh.position.z });
+      queueSpawn({ kind: "core", x: e.mesh.position.x, z: e.mesh.position.z });
       showBanner("CÉLULA RECUPERADA");
     }
     sfx.droneDie();
@@ -3544,6 +3936,10 @@ function updateCores(t, dt) {
 
 function updateEnemyDeployment(e, t, dt) {
   const d = e.deployment;
+  if (!d) {
+    e.spawning = false;
+    return false;
+  }
   if (e.spawnDelay > 0) {
     e.spawnDelay -= dt;
     d.warningMat.emissiveIntensity = 1.4 + Math.sin(t * 14) * 0.8;
@@ -3576,7 +3972,8 @@ function updateEnemyDeployment(e, t, dt) {
     e.mesh.position.y = e.spawnTargetY;
     e.mesh.scale.setScalar(1);
     e.spawning = false;
-    world.remove(d.rig, d.cableL, d.cableR);
+    recycleDeployment(d);
+    e.deployment = null;
     _v1.set(e.mesh.position.x, Math.max(0.25, e.spawnTargetY), e.mesh.position.z);
     spawnBits(_v1, 0xff8a32, 4);
     sfx.drop();
@@ -4097,17 +4494,32 @@ function updateFx(dt) {
   }
 }
 
-function setPaused(v) {
-  if (!state.running) return;
+function applyPause(v) {
   state.paused = v;
   pauseScreen.classList.toggle("hidden", !v);
   if (v) {
     document.exitPointerLock?.();
     sfx.hum(99);
+    window.NEXO_PORTAL?.gameplayStop?.();
   } else {
     if (!isMobilePlay()) canvas.requestPointerLock?.();
+    window.NEXO_PORTAL?.gameplayStart?.();
   }
   updateLockBanner();
+}
+
+function setPaused(v) {
+  if (!state.running) return;
+  if (window.NEXO_PORTAL?.adLock || setPaused._resuming) return;
+  if (!v && state.paused && window.NEXO_PORTAL && window.NEXO_PORTAL.kind !== "standalone") {
+    setPaused._resuming = true;
+    window.NEXO_PORTAL.commercialBreak().finally(() => {
+      setPaused._resuming = false;
+      if (state.running) applyPause(false);
+    });
+    return;
+  }
+  applyPause(v);
 }
 
 function finish(win) {
@@ -4126,6 +4538,8 @@ function finish(win) {
   if (win) sfx.win();
   else sfx.lose();
   sfx.hum(99);
+  window.NEXO_PORTAL?.gameplayStop?.();
+  if (win) window.NEXO_PORTAL?.happy?.();
 }
 
 function resetGame() {
@@ -4216,6 +4630,8 @@ function resetGame() {
 }
 
 function warmRenderer() {
+  const bolts = [];
+  const bitsWarm = [];
   for (let i = 0; i < 12; i++) {
     const bolt = takeMesh(boltPool, () => {
       const b = new THREE.Mesh(boltGeo, boltMat);
@@ -4223,19 +4639,43 @@ function warmRenderer() {
       b.receiveShadow = false;
       return b;
     });
-    recycle(bolt, boltPool);
+    bolt.position.set((i % 4) * 0.4 - 0.6, 1.2, 2.4);
+    bolts.push(bolt);
     const bit = takeMesh(bitPool, () => {
       const b = new THREE.Mesh(bitGeo, bitMaterial(0xff4028));
       b.castShadow = false;
       b.receiveShadow = false;
       return b;
     });
-    recycle(bit, bitPool);
+    bit.position.set((i % 4) * 0.4 - 0.6, 0.8, 2.4);
+    bitsWarm.push(bit);
+  }
+  for (const color of [0x3dff7a, 0x4ad4ff, 0x7fffe8, 0x9fd8d0, 0xff4028, 0xff6a22, 0xff8a32, 0xff6644]) {
+    bitMaterial(color);
+  }
+  const shown = [];
+  for (const kind of Object.keys(enemyGlbPool)) {
+    for (const glb of enemyGlbPool[kind]) {
+      glb.visible = true;
+      glb.position.set(0, 1.1, 2.2);
+      shown.push(glb);
+    }
+  }
+  for (const g of cellGlbPool) {
+    g.visible = true;
+    g.position.set(0.4, 1.1, 2.2);
+    shown.push(g);
   }
   try {
     renderer.compile(scene, camera);
   } catch (err) {
     console.warn("compile", err);
+  }
+  for (const bolt of bolts) recycle(bolt, boltPool);
+  for (const bit of bitsWarm) recycle(bit, bitPool);
+  for (const obj of shown) {
+    obj.visible = false;
+    obj.position.set(0, -80, 0);
   }
 }
 
@@ -4269,18 +4709,25 @@ function loop(now) {
   renderer.render(scene, camera);
 }
 
-function start(e) {
+async function start(e) {
   e?.preventDefault?.();
   e?.stopPropagation?.();
+  if (window.NEXO_PORTAL?.adLock) return;
   const now = performance.now();
   if (now - (start._t || 0) < 350) return;
   start._t = now;
+  const replay = !endScreen.classList.contains("hidden");
   try {
+    await window.NEXO_PORTAL?.ready;
+    if (replay) await window.NEXO_PORTAL?.commercialBreak?.();
     if (btnStart) {
       btnStart.disabled = false;
       btnStart.textContent = "INICIAR";
     }
-    if (isMobilePlay()) enterFullscreen();
+    if (isMobilePlay()) {
+      enterFullscreen();
+      lockLandscape();
+    }
     initAudio();
     audio.ctx?.resume();
     startAmbience();
@@ -4291,12 +4738,14 @@ function start(e) {
     resetGame();
     resizeView();
     if (!isMobilePlay()) canvas.requestPointerLock?.();
+    window.NEXO_PORTAL?.gameplayStart?.();
   } catch (err) {
     console.warn("start fail", err);
     menu?.classList.add("hidden");
     hud?.classList.remove("hidden");
     state.running = true;
     state.paused = false;
+    window.NEXO_PORTAL?.gameplayStart?.();
   }
 }
 
@@ -4318,6 +4767,19 @@ menu?.addEventListener("pointerdown", (e) => {
   if (e.target.closest("#btn-start")) start(e);
 }, { passive: false });
 btnResume.addEventListener("click", () => setPaused(false));
+btnPause?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.running) setPaused(true);
+});
+for (const id of ["btn-sfx", "btn-sfx-pause"]) {
+  document.getElementById(id)?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applySfxPack((audio.sfxPack || readSfxPack()) === "classic" ? "new" : "classic");
+  });
+}
+syncSfxButtons();
 
 function tryOpenDoor() {
   if (!state.door || state.door.open || state.door.opening) return false;
@@ -4439,7 +4901,7 @@ function hitStick(x, y) {
 function hitUi(x, y) {
   const el = document.elementFromPoint(x, y);
   if (!el) return false;
-  return !!(el.closest && el.closest("#mobile-controls button, .weapon-hotbar, .inv, #btn-start, #btn-resume, #btn-retry"));
+  return !!(el.closest && el.closest("#mobile-controls button, .weapon-hotbar, .inv, #btn-start, #btn-resume, #btn-retry, #btn-pause, #btn-sfx, #btn-sfx-pause"));
 }
 
 function applyStick(x, y) {
@@ -4552,6 +5014,7 @@ touchShield?.addEventListener("pointerdown", (e) => {
 });
 
 function onViewResize() {
+  syncOrientation();
   if (isMobilePlay() && state.running) {
     clearTimeout(onViewResize.t);
     onViewResize.t = setTimeout(resizeView, 150);
@@ -4567,7 +5030,7 @@ document.addEventListener("webkitfullscreenchange", onViewResize);
 buildWorld();
 requestAnimationFrame(loop);
 
-window.NEXO_DEBUG = { player, state, colliders, assets };
+if (window.NEXO_PORTAL?.kind === "standalone") window.NEXO_DEBUG = { player, state, colliders, assets };
 
 btnStart.disabled = false;
 btnStart.textContent = "INICIAR";

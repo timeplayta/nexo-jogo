@@ -4,6 +4,8 @@ playtest-shots/
 .DS_Store
 *.log
 _review/
+nexo-portal.zip
+portal-pack/
 
 # Local Netlify folder
 .netlify

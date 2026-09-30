@@ -8,10 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#07090d" />
   <title>NEXO</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <script src="portal.js"></script>
 </head>
 <body>
   <div id="game-root">
@@ -84,6 +82,7 @@
         <div><kbd>ESC</kbd> pausar</div>
       </div>
 
+      <button id="btn-pause" type="button">PAUSA</button>
       <div id="near-prompt" class="hidden">Aproxime-se para recolher</div>
       <div id="lock-banner">Clique na tela para capturar o cursor</div>
       <div id="mobile-controls">
@@ -91,10 +90,10 @@
         <div id="touch-look"></div>
         <button id="touch-aim">MIRA</button>
         <button id="touch-fire">ATIRAR</button>
-        <button id="touch-reload">R</button>
+        <button id="touch-reload">REC</button>
         <button id="touch-jump">PULAR</button>
         <button id="touch-kit">KIT</button>
-        <button id="touch-shield">ESC</button>
+        <button id="touch-shield">ESCUDO</button>
       </div>
     </div>
 
@@ -114,7 +113,8 @@
           <li>Cada fase amplia o mapa e intensifica a defesa</li>
         </ol>
         <button id="btn-start">INICIAR</button>
-        <p class="tiny">PC: WASD e mouse. Celular: analógico + arrastar pra olhar. Mesmo link nos dois.</p>
+        <button id="btn-sfx" class="ghost" type="button">SOM: NOVO</button>
+        <p class="tiny">PC: WASD e mouse. Celular: vire de lado. Analógico + arrastar pra olhar.</p>
       </div>
     </div>
 
@@ -122,8 +122,9 @@
       <div class="panel">
         <p class="tag">PAUSADO</p>
         <h1>NEXO</h1>
-        <p class="blurb">Pressione ESC ou o botão para retomar. O cursor permanece livre até o próximo clique.</p>
+        <p class="blurb">Toque em CONTINUAR ou pressione ESC para voltar ao jogo.</p>
         <button id="btn-resume">CONTINUAR</button>
+        <button id="btn-sfx-pause" class="ghost" type="button">SOM: NOVO</button>
       </div>
     </div>
 
@@ -137,11 +138,16 @@
     </div>
   </div>
 
+  <div id="rotate-hint">
+    <p>VIRE O CELULAR DE LADO</p>
+    <span>O NEXO só joga deitado</span>
+  </div>
+
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/"
       }
     }
   </script>
